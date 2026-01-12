@@ -38,10 +38,9 @@ A 512-dimensional float32 embedding has capacity of 512 × 32 = 16,384 bits, pro
 
 High-dimensional data (tool invocations) actually lie on a lower-dimensional manifold:
 - All possible strings: infinite dimensional
-- Valid tool invocations: structured subspace
-- Our embedding: learned coordinates on this manifold
-
-Example: All search(query=?, max_results=?) calls form a 2D manifold where:
+- Valid tool invocations: structured su    Architecture:
+    - Encoder: ToolCall → R^d
+    - Decoder: R^d → ToolCallts=?) calls form a 2D manifold where:
 - One dimension captures query semantics
 - Another dimension captures result count
 
@@ -66,7 +65,12 @@ Decoder: ψ_φ: R^d → ToolCall
 Training objective:
 L_reconstruction = -Σᵢ log P(xᵢ | x₁, ..., xᵢ₋₁, z)
 
-This is sequence-to-sequence learning with an information bottleneck that forces the model to learn efficient representations.
+This is sequence-to-sequence learning with an iA tool invocation contains:
+- Tool identity: log₂(|T|) bits (e.g., ~3 bits for 6 tools)
+- Parameters: Σᵢ I(pᵢ|T) bits (e.g., ~50-200 bits for text query)
+- Total: ~60-210 bits of information
+
+A 512-dimensional float32 embedding has capacity of 512 × 32 = 16,384 bits, providing ~100x overhead. This massive redundancy ensures lossless compression is theoretically achievable.nformation bottleneck that forces the model to learn efficient representations.
 
 ### Phase 2: LLM Integration
 
@@ -94,11 +98,9 @@ Training autoencoder:
 2. Tokenize: [42, 123, 456, ...]
 3. Encode: Transformer → h_avg → z = [0.23, -0.45, 0.67, ..., 0.12]
 4. Decode: z → h₀ → autoregressively generate tokens
-5. Loss: CrossEntropy(generated, original)
-
-Training LLM:
-1. Context: "User: I need papers on transformers"
-2. Ground truth: "search(query='transformer papers', max_results=10)"
+5. Loss: CrossEntropy(generated, origi    Architecture:
+    - Encoder: ToolCall → R^d
+    - Decoder: R^d → ToolCallsformer papers', max_results=10)"
 3. Encode ground truth: z_target = [0.25, -0.43, ...]
 4. LLM predicts: z_predicted = W_tool · LLM(context)
 5. Loss: MSE(z_predicted, z_target)
@@ -120,7 +122,12 @@ Neural networks can approximate any continuous function, so given sufficient dim
 Such that ψ(φ(x)) ≈ x
 
 ### 2. Information Bottleneck
-The bottleneck forces the model to:
+The bottleneck forces the model to:A tool invocation contains:
+- Tool identity: log₂(|T|) bits (e.g., ~3 bits for 6 tools)
+- Parameters: Σᵢ I(pᵢ|T) bits (e.g., ~50-200 bits for text query)
+- Total: ~60-210 bits of information
+
+A 512-dimensional float32 embedding has capacity of 512 × 32 = 16,384 bits, providing ~100x overhead. This massive redundancy ensures lossless compression is theoretically achievable.
 - Discard irrelevant information
 - Preserve task-critical information
 - Learn invariances (e.g., "cat" ≈ "cats")
@@ -128,10 +135,9 @@ The bottleneck forces the model to:
 This is a classic principle from information theory: compress while preserving task-relevant structure.
 
 ### 3. Continuous Optimization
-Unlike discrete token prediction:
-- Embeddings provide smooth gradients
-- No need for tricks like Gumbel-Softmax
-- Direct backpropagation through entire pipeline
+Unlike discrete token prediction    Architecture:
+    - Encoder: ToolCall → R^d
+    - Decoder: R^d → ToolCallgh entire pipeline
 
 ### 4. Semantic Geometry
 Continuous spaces enable:
@@ -176,7 +182,7 @@ Create synthetic training data covering:
 Tool schemas:
 - search(query: str, max_results: int, date_filter: Optional[DateRange])
 - calculate(expression: str)
-- database_query(sql: str, timeout: int)
+- database_query(sql: str, https://api.github.com/users',timeout: int)
 - send_email(to: email, subject: str, body: str, cc: Optional[List[email]])
 - web_fetch(url: str, method: enum["GET", "POST"])
 - file_read(path: str, encoding: str)
@@ -187,8 +193,17 @@ Generate 100K+ diverse examples:
 - Include edge cases
 - Add real-world examples from API docs
 
-### Training Protocol
+### Data Curation - Another Possible Route
 
+Start with Question:
+- Grab questions from a dataset like HLE
+- Hire undergrad or use chatgpt to create tool call annotations
+
+Start with Tool Call:
+- Grab MCP server configs
+- Parse config to our structure    Architecture:
+    - Encoder: ToolCall → R^d
+    - Decoder: R^d → ToolCall
 Phase 1 - Autoencoder (50 epochs):
 - Batch size: 64
 - Learning rate: 1e-4
@@ -211,13 +226,16 @@ Autoencoder quality:
 - Per-tool accuracy
 - Per-parameter-type accuracy
 - Embedding space properties (norm, variance, clustering)
+    - Robustness to context variations
 
 End-to-end system:
 - Tool selection accuracy
 - Parameter correctness (exact match)
+    - Take methods from previous work (How are LLMS "accuracy" measure?)
 - Parameter correctness (semantic similarity for strings)
+    - Take methods from previous work (How are LLMS "accuracy" measure?)
 - Latency vs text baseline
-- Robustness to context variations
+- Total energy usage (watts used)
 
 ## Research Questions
 
@@ -313,12 +331,12 @@ Given context c:
 - NTILC: Embedding generation with learned decoding
 - Advantage: Single-step prediction, continuous optimization
 
-### vs. VQ-VAE
+### vs. VQ-VAE - Ablation
 - VQ-VAE: Discrete codebook, quantized latents
 - NTILC: Continuous latents
 - Difference: We want smooth gradients for LLM training
 
-### vs. CLIP
+### vs. CLIP - Not neccesarily needed
 - CLIP: Contrastive learning for vision-language embeddings
 - NTILC: Reconstruction learning for tool invocation embeddings
 - Similarity: Both learn embedding spaces
@@ -453,9 +471,15 @@ Mitigation:
 3. Compositionality in learned program embeddings
 4. Manifold learning for structured data
 
+(New dataset that was created with lots of labor and has high quality data in a smart way)
+
 ## Implementation Roadmap
 
 ### Month 1: Foundation
+- Why is this problem is new and needed to be worked on?
+    - Collect many related works and read through all the problem settings/intros
+- Prepare datasets and benchmarks
+- Take naive route (use bert encorder or chatgpt), add cross attention, then move onto training full stack
 - Implement autoencoder architecture
 - Build synthetic data generator
 - Train and evaluate autoencoder
@@ -464,7 +488,6 @@ Mitigation:
 ### Month 2: Integration
 - Integrate with base LLM (GPT-2, LLaMA)
 - Implement training pipeline
-- Create evaluation benchmarks
 - Initial experiments
 
 ### Month 3: Evaluation
