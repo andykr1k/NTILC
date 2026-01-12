@@ -4,7 +4,7 @@ Decoder module for NTILC: Transforms continuous embeddings back into tool invoca
 
 import torch
 import torch.nn as nn
-from transformers import GPT2LMHeadModel, GPT2Tokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 class ToolInvocationDecoder(nn.Module):
@@ -38,17 +38,27 @@ class ToolInvocationDecoder(nn.Module):
         self.embedding_dim = embedding_dim
         self.max_length = max_length
         
-        # Load pretrained decoder
-        self.tokenizer = GPT2Tokenizer.from_pretrained(model_name)
-        self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.decoder = GPT2LMHeadModel.from_pretrained(model_name)
+        # Load pretrained decoder (supports GPT-2, GPT-Neo, OPT, etc.)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        # Set pad token if not already set
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+        
+        self.decoder = AutoModelForCausalLM.from_pretrained(model_name)
         
         if freeze_base:
             for param in self.decoder.parameters():
                 param.requires_grad = False
         
-        # Get hidden dimension from decoder
-        hidden_dim = self.decoder.config.n_embd
+        # Get hidden dimension from decoder (different models use different attribute names)
+        if hasattr(self.decoder.config, 'n_embd'):  # GPT-2 style
+            hidden_dim = self.decoder.config.n_embd
+        elif hasattr(self.decoder.config, 'hidden_size'):  # BERT/OPT style
+            hidden_dim = self.decoder.config.hidden_size
+        elif hasattr(self.decoder.config, 'd_model'):  # T5 style
+            hidden_dim = self.decoder.config.d_model
+        else:
+            raise ValueError(f"Could not determine hidden dimension for model {model_name}")
         
         # Projection from embedding to decoder hidden dimension
         self.embedding_projection = nn.Sequential(
@@ -58,6 +68,13 @@ class ToolInvocationDecoder(nn.Module):
             nn.Linear(hidden_dim * 2, hidden_dim),
             nn.LayerNorm(hidden_dim)
         )
+        
+        # Initialize projection layers properly
+        for module in self.embedding_projection:
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight, gain=0.02)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
         
         # Learnable initial token embedding (replaces start token)
         self.initial_token_embedding = nn.Parameter(
@@ -104,36 +121,53 @@ class ToolInvocationDecoder(nn.Module):
     ) -> dict[str, torch.Tensor]:
         """
         Training forward pass with teacher forcing.
+        Uses the projected embedding to condition the first token prediction.
         """
         batch_size = projected_emb.shape[0]
         device = projected_emb.device
+        seq_len = target_ids.shape[1]
         
-        # Shift target_ids for teacher forcing (predict next token)
-        input_ids = target_ids[:, :-1]  # Remove last token
-        targets = target_ids[:, 1:]  # What we're predicting
+        # For teacher forcing: input is target_ids[:-1], we predict target_ids[1:]
+        input_ids = target_ids[:, :-1]  # (batch_size, seq_len-1)
+        target_mask = attention_mask[:, 1:]  # (batch_size, seq_len-1)
         
-        # Get decoder embeddings for input sequence
-        decoder_embeddings = self.decoder.transformer.wte(input_ids)  # (batch_size, seq_len-1, hidden_dim)
+        # Get token embeddings for input sequence
+        # Different models have different embedding layers
+        if hasattr(self.decoder, 'transformer'):  # GPT-2 style
+            wte = self.decoder.transformer.wte
+        elif hasattr(self.decoder, 'model'):  # OPT/GPT-Neo style
+            wte = self.decoder.model.embed_tokens
+        elif hasattr(self.decoder, 'gpt_neox'):  # GPT-NeoX style
+            wte = self.decoder.gpt_neox.embed_in
+        else:
+            # Fallback: use model's embedding layer
+            wte = self.decoder.get_input_embeddings()
         
-        # Prepend projected embedding as initial hidden state
-        projected_expanded = projected_emb.unsqueeze(1)  # (batch_size, 1, hidden_dim)
-        decoder_embeddings = torch.cat([projected_expanded, decoder_embeddings], dim=1)
+        token_embeddings = wte(input_ids)  # (batch_size, seq_len-1, hidden_dim)
         
-        # Create attention mask (include projected embedding position)
-        extended_mask = torch.cat([
-            torch.ones(batch_size, 1, device=device, dtype=attention_mask.dtype),
-            attention_mask[:, :-1]
-        ], dim=1)
+        # Add projected embedding to the first token's embedding
+        # This conditions the generation on the embedding
+        token_embeddings[:, 0, :] = token_embeddings[:, 0, :] + projected_emb
         
-        # Forward through decoder
-        outputs = self.decoder.transformer(
-            inputs_embeds=decoder_embeddings,
-            attention_mask=extended_mask
+        # Forward through decoder transformer
+        # Different models have different transformer attribute names
+        if hasattr(self.decoder, 'transformer'):  # GPT-2 style
+            transformer = self.decoder.transformer
+        elif hasattr(self.decoder, 'model'):  # OPT/GPT-Neo style
+            transformer = self.decoder.model
+        elif hasattr(self.decoder, 'gpt_neox'):  # GPT-NeoX style
+            transformer = self.decoder.gpt_neox
+        else:
+            transformer = self.decoder
+        
+        outputs = transformer(
+            inputs_embeds=token_embeddings,
+            attention_mask=attention_mask[:, :-1]
         )
-        hidden_states = outputs.last_hidden_state
+        hidden_states = outputs.last_hidden_state  # (batch_size, seq_len-1, hidden_dim)
         
-        # Get logits (skip the first position which is the embedding)
-        logits = self.decoder.lm_head(hidden_states[:, 1:, :])  # (batch_size, seq_len-1, vocab_size)
+        # Get logits for next token prediction
+        logits = self.decoder.lm_head(hidden_states)  # (batch_size, seq_len-1, vocab_size)
         
         return {"logits": logits}
     
@@ -152,10 +186,24 @@ class ToolInvocationDecoder(nn.Module):
         # We'll prepend it to the sequence
         current_emb = projected_emb.unsqueeze(1)  # (batch_size, 1, hidden_dim)
         
+        # Get transformer and embedding layers (same logic as training)
+        if hasattr(self.decoder, 'transformer'):  # GPT-2 style
+            transformer = self.decoder.transformer
+            wte = self.decoder.transformer.wte
+        elif hasattr(self.decoder, 'model'):  # OPT/GPT-Neo style
+            transformer = self.decoder.model
+            wte = self.decoder.model.embed_tokens
+        elif hasattr(self.decoder, 'gpt_neox'):  # GPT-NeoX style
+            transformer = self.decoder.gpt_neox
+            wte = self.decoder.gpt_neox.embed_in
+        else:
+            transformer = self.decoder
+            wte = self.decoder.get_input_embeddings()
+        
         # Generate tokens autoregressively
         for _ in range(self.max_length):
             # Forward through decoder
-            outputs = self.decoder.transformer(
+            outputs = transformer(
                 inputs_embeds=current_emb,
                 past_key_values=past_key_values,
                 use_cache=True
@@ -176,7 +224,7 @@ class ToolInvocationDecoder(nn.Module):
                 break
             
             # Get embedding for next token
-            next_emb = self.decoder.transformer.wte(next_token_id)  # (batch_size, 1, hidden_dim)
+            next_emb = wte(next_token_id)  # (batch_size, 1, hidden_dim)
             current_emb = next_emb
         
         # Concatenate generated tokens

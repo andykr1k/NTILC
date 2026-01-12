@@ -13,7 +13,8 @@ class AutoencoderConfig:
     # Model architecture
     embedding_dim: int = 512
     encoder_model: str = "bert-base-uncased"
-    decoder_model: str = "gpt2"
+    decoder_model: str = "gpt2-medium"  # Upgraded from gpt2. Options: gpt2, gpt2-medium, gpt2-large, 
+                                         # gpt-neo-125M, gpt-neo-1.3B, opt-125m, opt-350m, opt-1.3b
     pooling_strategy: str = "attention"  # "mean", "cls", "max", "attention"
     max_length: int = 128
     dropout: float = 0.1
@@ -22,11 +23,12 @@ class AutoencoderConfig:
     
     # Training hyperparameters
     batch_size: int = 64
-    learning_rate: float = 1e-4
+    learning_rate: float = 5e-4  # Increased from 1e-4 for better convergence
     weight_decay: float = 0.01
     num_epochs: int = 50
     warmup_steps: int = 1000
     gradient_clip: float = 1.0
+    use_lr_scheduler: bool = True  # Use cosine annealing with warmup
     
     # Data
     num_train_samples: int = 100000

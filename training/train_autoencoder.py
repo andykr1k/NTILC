@@ -69,7 +69,8 @@ def train_epoch(
     device: torch.device,
     config: AutoencoderConfig,
     epoch: int,
-    global_step: int
+    global_step: int,
+    scheduler=None
 ) -> Tuple[Dict[str, float], int]:
     """Train for one epoch."""
     model.train()
@@ -93,18 +94,20 @@ def train_epoch(
         
         logits = outputs["logits"]  # (batch_size, seq_len-1, vocab_size)
         
-        # Shift targets for next-token prediction
+        # Shift targets for next-token prediction (what we're predicting)
         targets = target_ids[:, 1:]  # (batch_size, seq_len-1)
         target_mask = attention_mask[:, 1:]  # (batch_size, seq_len-1)
         
         # Compute loss (only on non-padding tokens)
-        loss = criterion(
+        # Reshape for cross entropy: (batch * seq, vocab_size) vs (batch * seq,)
+        loss_per_token = criterion(
             logits.reshape(-1, logits.size(-1)),
             targets.reshape(-1)
-        )
+        )  # (batch * seq,)
         
-        # Mask out padding tokens
-        loss = (loss * target_mask.reshape(-1)).sum() / target_mask.sum()
+        # Mask out padding tokens and compute mean
+        mask_flat = target_mask.reshape(-1).float()
+        loss = (loss_per_token * mask_flat).sum() / (mask_flat.sum() + 1e-8)
         
         # Backward pass
         optimizer.zero_grad()
@@ -115,6 +118,10 @@ def train_epoch(
         total_grad_norm += grad_norm.item()
         
         optimizer.step()
+        
+        # Update learning rate scheduler
+        if scheduler is not None:
+            scheduler.step()
         
         total_loss += loss.item()
         num_batches += 1
@@ -220,6 +227,8 @@ def main():
             run_name = f"autoencoder_{timestamp}"
         
         # Organize hyperparameters into categories for better tracking
+        # NOTE: When adding new config parameters, make sure to add them here!
+        # This ensures all hyperparameters are tracked in wandb
         hyperparams = {
             # Model architecture
             "model/embedding_dim": config.embedding_dim,
@@ -238,6 +247,7 @@ def main():
             "training/num_epochs": config.num_epochs,
             "training/warmup_steps": config.warmup_steps,
             "training/gradient_clip": config.gradient_clip,
+            "training/use_lr_scheduler": config.use_lr_scheduler,
             "training/optimizer": "AdamW",
             "training/loss_function": "CrossEntropyLoss",
             
@@ -254,6 +264,13 @@ def main():
             "logging/log_interval": config.log_interval,
             "logging/eval_interval": config.eval_interval,
             "logging/save_interval": config.save_interval,
+            "logging/use_wandb": config.use_wandb,
+            "logging/wandb_project": config.wandb_project,
+            "logging/wandb_entity": config.wandb_entity,
+            
+            # Paths
+            "paths/output_dir": config.output_dir,
+            "paths/log_dir": config.log_dir,
         }
         
         wandb.init(
@@ -363,19 +380,58 @@ def main():
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config.learning_rate,
-        weight_decay=config.weight_decay
+        weight_decay=config.weight_decay,
+        betas=(0.9, 0.999),
+        eps=1e-8
     )
+    
+    # Learning rate scheduler with warmup
+    scheduler = None
+    if config.use_lr_scheduler:
+        from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
+        
+        # Warmup scheduler
+        warmup_scheduler = LinearLR(
+            optimizer,
+            start_factor=0.1,
+            end_factor=1.0,
+            total_iters=config.warmup_steps
+        )
+        
+        # Cosine annealing after warmup
+        cosine_scheduler = CosineAnnealingLR(
+            optimizer,
+            T_max=len(train_loader) * config.num_epochs - config.warmup_steps,
+            eta_min=config.learning_rate * 0.01
+        )
+        
+        # Combine schedulers
+        scheduler = SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, cosine_scheduler],
+            milestones=[config.warmup_steps]
+        )
     
     # Log optimizer-specific hyperparameters
     if config.use_wandb:
-        wandb.config.update({
+        optimizer_config = {
             "optimizer/betas": optimizer.param_groups[0].get('betas', (0.9, 0.999)),
             "optimizer/eps": optimizer.param_groups[0].get('eps', 1e-8),
             "optimizer/amsgrad": optimizer.param_groups[0].get('amsgrad', False),
-        })
+        }
+        if scheduler is not None:
+            optimizer_config.update({
+                "scheduler/type": "SequentialLR",
+                "scheduler/warmup_type": "LinearLR",
+                "scheduler/cosine_type": "CosineAnnealingLR",
+                "scheduler/warmup_steps": config.warmup_steps,
+                "scheduler/warmup_start_factor": 0.1,
+                "scheduler/cosine_eta_min": config.learning_rate * 0.01,
+            })
+        wandb.config.update(optimizer_config)
     
     # Loss function
-    criterion = nn.CrossEntropyLoss(reduction='none')
+    criterion = nn.CrossEntropyLoss(reduction='none', ignore_index=-100)
     
     # Log model parameter counts
     if config.use_wandb:
@@ -398,7 +454,7 @@ def main():
         
         # Train
         train_metrics, global_step = train_epoch(
-            model, train_loader, optimizer, criterion, device, config, epoch, global_step
+            model, train_loader, optimizer, criterion, device, config, epoch, global_step, scheduler
         )
         print(f"Train Loss: {train_metrics['loss']:.4f}")
         
