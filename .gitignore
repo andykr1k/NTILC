@@ -1,0 +1,70 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Data directories - ignore all files but keep directory structure
+data/**
+!data/
+!data/.gitkeep
+!data/**/
+!data/**/.gitkeep
+
+# Checkpoints - ignore all files but keep directory structure
+checkpoints/**
+!checkpoints/
+!checkpoints/.gitkeep
+
+# Logs - ignore all files but keep directory structure
+logs/**
+!logs/
+!logs/.gitkeep
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ML/AI specific
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.pkl
+*.pickle
+wandb/
+.wandb/
+
+# Analysis outputs
+analysis/
+*.png
+*.jpg
+*.pdf
+*.svg
+
+# Temporary files
+*.tmp
+*.temp
+*.log

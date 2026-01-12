@@ -1,0 +1,14 @@
+torch
+transformers
+tokenizers
+datasets
+wandb
+faker
+pandas
+numpy
+matplotlib
+seaborn
+scikit-learn
+umap-learn
+plotly
+tqdm
