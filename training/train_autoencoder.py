@@ -10,6 +10,7 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import GPT2Tokenizer
 from tqdm import tqdm
 import wandb
+from typing import Tuple, Dict
 
 import sys
 from pathlib import Path
@@ -66,12 +67,15 @@ def train_epoch(
     optimizer: torch.optim.Optimizer,
     criterion: nn.Module,
     device: torch.device,
-    config: AutoencoderConfig
-) -> dict[str, float]:
+    config: AutoencoderConfig,
+    epoch: int,
+    global_step: int
+) -> Tuple[Dict[str, float], int]:
     """Train for one epoch."""
     model.train()
     total_loss = 0.0
     num_batches = 0
+    total_grad_norm = 0.0
     
     progress_bar = tqdm(dataloader, desc="Training")
     
@@ -106,13 +110,15 @@ def train_epoch(
         optimizer.zero_grad()
         loss.backward()
         
-        # Gradient clipping
-        torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip)
+        # Gradient clipping and tracking
+        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip)
+        total_grad_norm += grad_norm.item()
         
         optimizer.step()
         
         total_loss += loss.item()
         num_batches += 1
+        current_step = global_step + batch_idx
         
         # Update progress bar
         progress_bar.set_postfix({"loss": loss.item()})
@@ -120,22 +126,30 @@ def train_epoch(
         # Logging
         if batch_idx % config.log_interval == 0:
             if config.use_wandb:
-                wandb.log({
+                log_dict = {
                     "train/loss": loss.item(),
-                    "train/step": batch_idx
-                })
+                    "train/grad_norm": grad_norm.item(),
+                    "train/learning_rate": optimizer.param_groups[0]['lr'],
+                    "train/step": current_step,
+                    "train/epoch": epoch
+                }
+                wandb.log(log_dict, step=current_step)
     
     avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
-    return {"loss": avg_loss}
+    avg_grad_norm = total_grad_norm / num_batches if num_batches > 0 else 0.0
+    
+    new_global_step = global_step + len(dataloader)
+    return {"loss": avg_loss, "grad_norm": avg_grad_norm}, new_global_step
 
 
 def evaluate(
     model: ToolInvocationAutoencoder,
     dataloader: DataLoader,
     device: torch.device,
-    config: AutoencoderConfig
+    config: AutoencoderConfig,
+    split: str = "val"
 ) -> dict[str, float]:
-    """Evaluate model on validation set."""
+    """Evaluate model on validation/test set."""
     model.eval()
     
     all_tool_calls = []
@@ -143,7 +157,7 @@ def evaluate(
     all_embeddings = []
     
     with torch.no_grad():
-        for batch in tqdm(dataloader, desc="Evaluating"):
+        for batch in tqdm(dataloader, desc=f"Evaluating {split}"):
             tool_calls = batch["tool_call"]
             
             # Reconstruct
@@ -159,6 +173,19 @@ def evaluate(
     # Compute metrics
     metrics = compute_metrics(all_tool_calls, all_reconstructed, torch.cat(all_embeddings, dim=0))
     
+    # Add per-tool metrics if available
+    try:
+        from evaluation.metrics import per_tool_metrics
+        per_tool = per_tool_metrics(all_tool_calls, all_reconstructed)
+        for tool_name, tool_metrics in per_tool.items():
+            for metric_name, metric_value in tool_metrics.items():
+                if metric_name != "count":  # Skip count, log as separate metric
+                    metrics[f"{tool_name}/{metric_name}"] = metric_value
+                else:
+                    metrics[f"{tool_name}/count"] = metric_value
+    except Exception as e:
+        print(f"Warning: Could not compute per-tool metrics: {e}")
+    
     return metrics
 
 
@@ -171,13 +198,74 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
+    # Log device information to wandb (will be added after init)
+    device_info = {
+        "device": str(device),
+        "cuda_available": torch.cuda.is_available(),
+    }
+    if torch.cuda.is_available():
+        device_info.update({
+            "cuda_device_count": torch.cuda.device_count(),
+            "cuda_device_name": torch.cuda.get_device_name(0),
+            "cuda_device_capability": torch.cuda.get_device_capability(0),
+        })
+    
     # Initialize wandb if enabled
     if config.use_wandb:
+        # Generate run name if not provided
+        run_name = config.wandb_run_name
+        if run_name is None:
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            run_name = f"autoencoder_{timestamp}"
+        
+        # Organize hyperparameters into categories for better tracking
+        hyperparams = {
+            # Model architecture
+            "model/embedding_dim": config.embedding_dim,
+            "model/encoder_model": config.encoder_model,
+            "model/decoder_model": config.decoder_model,
+            "model/pooling_strategy": config.pooling_strategy,
+            "model/max_length": config.max_length,
+            "model/dropout": config.dropout,
+            "model/freeze_encoder": config.freeze_encoder,
+            "model/freeze_decoder": config.freeze_decoder,
+            
+            # Training hyperparameters
+            "training/batch_size": config.batch_size,
+            "training/learning_rate": config.learning_rate,
+            "training/weight_decay": config.weight_decay,
+            "training/num_epochs": config.num_epochs,
+            "training/warmup_steps": config.warmup_steps,
+            "training/gradient_clip": config.gradient_clip,
+            "training/optimizer": "AdamW",
+            "training/loss_function": "CrossEntropyLoss",
+            
+            # Data configuration
+            "data/num_train_samples": config.num_train_samples,
+            "data/num_val_samples": config.num_val_samples,
+            "data/num_test_samples": config.num_test_samples,
+            
+            # Early stopping
+            "early_stopping/patience": config.early_stopping_patience,
+            "early_stopping/min_delta": config.early_stopping_min_delta,
+            
+            # Logging configuration
+            "logging/log_interval": config.log_interval,
+            "logging/eval_interval": config.eval_interval,
+            "logging/save_interval": config.save_interval,
+        }
+        
         wandb.init(
+            entity=config.wandb_entity,
             project=config.wandb_project,
-            config=config.__dict__,
-            name="autoencoder_training"
+            config=hyperparams,
+            name=run_name,
+            tags=["autoencoder", "training"]
         )
+        
+        # Add device information
+        wandb.config.update(device_info)
     
     # Create output directories
     os.makedirs(config.output_dir, exist_ok=True)
@@ -232,6 +320,27 @@ def main():
         num_workers=4
     )
     
+    # Update wandb config with computed hyperparameters
+    if config.use_wandb:
+        wandb.config.update({
+            "data/actual_train_size": len(train_tool_calls),
+            "data/actual_val_size": len(val_tool_calls),
+            "data/vocab_size": len(tokenizer),
+            "training/steps_per_epoch": len(train_loader),
+            "training/total_training_steps": len(train_loader) * config.num_epochs,
+            "training/num_workers": 4,
+        })
+        
+        # Add data generator config
+        wandb.config.update({
+            "data_generator/format_style": data_config.format_style,
+            "data_generator/min_query_length": data_config.min_query_length,
+            "data_generator/max_query_length": data_config.max_query_length,
+            "data_generator/min_max_results": data_config.min_max_results,
+            "data_generator/max_max_results": data_config.max_max_results,
+            "data_generator/num_tools": len(data_config.tools),
+        })
+    
     # Initialize model
     print("Initializing model...")
     model = ToolInvocationAutoencoder(
@@ -246,6 +355,10 @@ def main():
     )
     model = model.to(device)
     
+    # Watch model for gradients and parameters (after model is initialized)
+    if config.use_wandb:
+        wandb.watch(model, log="all", log_freq=config.log_interval)
+    
     # Initialize optimizer
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -253,36 +366,72 @@ def main():
         weight_decay=config.weight_decay
     )
     
+    # Log optimizer-specific hyperparameters
+    if config.use_wandb:
+        wandb.config.update({
+            "optimizer/betas": optimizer.param_groups[0].get('betas', (0.9, 0.999)),
+            "optimizer/eps": optimizer.param_groups[0].get('eps', 1e-8),
+            "optimizer/amsgrad": optimizer.param_groups[0].get('amsgrad', False),
+        })
+    
     # Loss function
     criterion = nn.CrossEntropyLoss(reduction='none')
+    
+    # Log model parameter counts
+    if config.use_wandb:
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        wandb.config.update({
+            "model/total_parameters": total_params,
+            "model/trainable_parameters": trainable_params,
+            "model/non_trainable_parameters": total_params - trainable_params,
+        })
     
     # Training loop
     best_val_loss = float('inf')
     patience_counter = 0
+    global_step = 0
     
     print("Starting training...")
     for epoch in range(config.num_epochs):
         print(f"\nEpoch {epoch + 1}/{config.num_epochs}")
         
         # Train
-        train_metrics = train_epoch(model, train_loader, optimizer, criterion, device, config)
+        train_metrics, global_step = train_epoch(
+            model, train_loader, optimizer, criterion, device, config, epoch, global_step
+        )
         print(f"Train Loss: {train_metrics['loss']:.4f}")
         
+        # Log epoch-level train metrics
+        if config.use_wandb:
+            wandb.log({
+                "train/epoch_loss": train_metrics['loss'],
+                "train/epoch_grad_norm": train_metrics.get('grad_norm', 0.0),
+                "train/epoch": epoch + 1
+            }, step=global_step)
+        
         # Evaluate
-        if (epoch + 1) % (config.eval_interval // len(train_loader)) == 0 or epoch == 0:
-            val_metrics = evaluate(model, val_loader, device, config)
+        eval_should_run = (
+            (epoch + 1) % max(1, config.eval_interval // len(train_loader)) == 0 
+            or epoch == 0
+        )
+        if eval_should_run:
+            val_metrics = evaluate(model, val_loader, device, config, split="val")
             print(f"Validation Metrics:")
             for key, value in val_metrics.items():
                 print(f"  {key}: {value:.4f}")
             
-            # Log to wandb
+            # Log to wandb with proper step
             if config.use_wandb:
-                wandb.log({
-                    "val/" + k: v for k, v in val_metrics.items()
-                })
+                log_dict = {f"val/{k}": v for k, v in val_metrics.items()}
+                log_dict["val/epoch"] = epoch + 1
+                wandb.log(log_dict, step=global_step)
             
-            # Early stopping
-            val_loss = val_metrics.get("loss", float('inf'))
+            # Early stopping - use reconstruction error (1 - accuracy) as loss
+            # Prefer exact_match_accuracy, fallback to tool_accuracy
+            val_accuracy = val_metrics.get("exact_match_accuracy", val_metrics.get("tool_accuracy", 0.0))
+            val_loss = 1.0 - val_accuracy  # Convert accuracy to "loss" for early stopping
+            
             if val_loss < best_val_loss - config.early_stopping_min_delta:
                 best_val_loss = val_loss
                 patience_counter = 0
@@ -297,14 +446,25 @@ def main():
                     "val_metrics": val_metrics
                 }, checkpoint_path)
                 print(f"Saved best model to {checkpoint_path}")
+                
+                # Save as wandb artifact
+                if config.use_wandb:
+                    artifact = wandb.Artifact("best_model", type="model")
+                    artifact.add_file(checkpoint_path)
+                    wandb.log_artifact(artifact)
             else:
                 patience_counter += 1
                 if patience_counter >= config.early_stopping_patience:
                     print(f"Early stopping triggered after {epoch + 1} epochs")
+                    if config.use_wandb:
+                        wandb.log({"train/early_stopped": True, "train/epoch": epoch + 1}, step=global_step)
                     break
         
         # Periodic checkpoint
-        if (epoch + 1) % (config.save_interval // len(train_loader)) == 0:
+        checkpoint_should_run = (
+            (epoch + 1) % max(1, config.save_interval // len(train_loader)) == 0
+        )
+        if checkpoint_should_run:
             checkpoint_path = os.path.join(config.output_dir, f"checkpoint_epoch_{epoch + 1}.pt")
             torch.save({
                 "epoch": epoch,
@@ -312,6 +472,12 @@ def main():
                 "optimizer_state_dict": optimizer.state_dict(),
                 "config": config.__dict__
             }, checkpoint_path)
+            
+            # Save as wandb artifact
+            if config.use_wandb:
+                artifact = wandb.Artifact(f"checkpoint_epoch_{epoch + 1}", type="model")
+                artifact.add_file(checkpoint_path)
+                wandb.log_artifact(artifact)
     
     print("\nTraining complete!")
     
@@ -322,14 +488,29 @@ def main():
         test_dataset = ToolInvocationDataset(test_tool_calls, tokenizer, config.max_length)
         test_loader = DataLoader(test_dataset, batch_size=config.batch_size, shuffle=False)
         
-        test_metrics = evaluate(model, test_loader, device, config)
+        test_metrics = evaluate(model, test_loader, device, config, split="test")
         print("Test Metrics:")
         for key, value in test_metrics.items():
             print(f"  {key}: {value:.4f}")
         
         # Save test metrics
-        with open(os.path.join(config.output_dir, "test_metrics.json"), 'w') as f:
+        test_metrics_path = os.path.join(config.output_dir, "test_metrics.json")
+        with open(test_metrics_path, 'w') as f:
             json.dump(test_metrics, f, indent=2)
+        
+        # Log test metrics to wandb
+        if config.use_wandb:
+            log_dict = {f"test/{k}": v for k, v in test_metrics.items()}
+            wandb.log(log_dict, step=global_step)
+            
+            # Save test metrics as artifact
+            artifact = wandb.Artifact("test_metrics", type="metrics")
+            artifact.add_file(test_metrics_path)
+            wandb.log_artifact(artifact)
+    
+    # Finish wandb run
+    if config.use_wandb:
+        wandb.finish()
 
 
 if __name__ == "__main__":

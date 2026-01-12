@@ -41,8 +41,10 @@ class AutoencoderConfig:
     log_interval: int = 100
     eval_interval: int = 1000
     save_interval: int = 5000
-    use_wandb: bool = False
+    use_wandb: bool = True
     wandb_project: str = "ntilc"
+    wandb_entity: Optional[str] = "andykr1k"
+    wandb_run_name: Optional[str] = None  # Auto-generated if None
     
     # Early stopping
     early_stopping_patience: int = 5
