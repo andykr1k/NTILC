@@ -1,25 +1,26 @@
 """
 Training script for NTILC autoencoder.
 """
+from typing import Tuple, Dict, Union
+import wandb
+from tqdm import tqdm
+from transformers import GPT2Tokenizer
+from torch.utils.data import Dataset, DataLoader
+import torch.nn as nn
+import torch
+import json
+import os
+from models.autoencoder import ToolInvocationAutoencoder
+from training.config import AutoencoderConfig
+from training.data_generator import ToolInvocationGenerator, DataGeneratorConfig
+from evaluation.metrics import compute_metrics
 import sys
 from pathlib import Path
 
 # Add project root to path BEFORE any other imports
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
-from evaluation.metrics import compute_metrics
-from training.data_generator import ToolInvocationGenerator, DataGeneratorConfig
-from training.config import AutoencoderConfig
-from models.autoencoder import ToolInvocationAutoencoder
-import os
-import json
-import torch
-import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
-from transformers import GPT2Tokenizer
-from tqdm import tqdm
-import wandb
-from typing import Tuple, Dict, Union
+
 
 class ToolInvocationDataset(Dataset):
     """Dataset for tool invocation strings."""
@@ -77,10 +78,18 @@ def train_epoch(
     progress_bar = tqdm(dataloader, desc="Training")
 
     # Setup mixed precision training if enabled
+    # Note: If models are already loaded in FP16/BF16, we use autocast but NOT GradScaler
+    # GradScaler is only for FP32 models that get converted to FP16 during forward pass
+    use_autocast = config.use_mixed_precision and device.type == "cuda"
+    # Only use scaler for FP32 models
+    use_scaler = use_autocast and config.torch_dtype == "float32"
+
     scaler = None
-    if config.use_mixed_precision and device.type == "cuda":
-        scaler = torch.cuda.amp.GradScaler()
-        print("Using mixed precision training (FP16)")
+    if use_scaler:
+        scaler = torch.amp.GradScaler('cuda')
+        print("Using mixed precision training with GradScaler (FP32 -> FP16)")
+    elif use_autocast:
+        print("Using autocast for mixed precision (model already in FP16/BF16)")
 
     for batch_idx, batch in enumerate(progress_bar):
         tool_calls = batch["tool_call"]
@@ -88,8 +97,8 @@ def train_epoch(
         attention_mask = batch["attention_mask"].to(device)
 
         # Forward pass with mixed precision
-        if scaler is not None:
-            with torch.cuda.amp.autocast():
+        if use_autocast:
+            with torch.amp.autocast('cuda'):
                 outputs = model(
                     tool_calls=tool_calls,
                     target_ids=target_ids,
@@ -139,6 +148,7 @@ def train_epoch(
         optimizer.zero_grad()
 
         if scaler is not None:
+            # Use scaler for FP32 models with automatic mixed precision
             scaler.scale(loss).backward()
             # Gradient clipping with scaler
             scaler.unscale_(optimizer)
@@ -146,18 +156,21 @@ def train_epoch(
                 model.parameters(), config.gradient_clip)
             scaler.step(optimizer)
             scaler.update()
+            # Update learning rate scheduler AFTER optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
         else:
+            # Standard backward pass (works for both FP32 and FP16 models)
             loss.backward()
             # Gradient clipping and tracking
             grad_norm = torch.nn.utils.clip_grad_norm_(
                 model.parameters(), config.gradient_clip)
             optimizer.step()
+            # Update learning rate scheduler AFTER optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
 
         total_grad_norm += grad_norm.item()
-
-        # Update learning rate scheduler
-        if scheduler is not None:
-            scheduler.step()
 
         total_loss += loss.item()
         num_batches += 1

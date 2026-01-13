@@ -35,7 +35,7 @@ class AutoencoderConfig:
     use_mixed_precision: bool = True  # Use FP16/BF16 to halve memory usage
     use_gradient_checkpointing: bool = True  # Trade compute for memory
     # "float16" or "bfloat16" (bfloat16 more stable)
-    torch_dtype: str = "float16"
+    torch_dtype: str = "float32"
 
     # Data
     num_train_samples: int = 100000

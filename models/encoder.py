@@ -69,13 +69,13 @@ class ToolInvocationEncoder(nn.Module):
                 # Try loading base model directly (Qwen2.5 supports this)
                 self.transformer = AutoModel.from_pretrained(
                     model_name,
-                    torch_dtype=dtype
+                    dtype=dtype  # Use 'dtype' instead of deprecated 'torch_dtype'
                 )
             except:
                 # Fallback: load CausalLM but only keep transformer
                 model = AutoModelForCausalLM.from_pretrained(
                     model_name,
-                    torch_dtype=dtype
+                    dtype=dtype  # Use 'dtype' instead of deprecated 'torch_dtype'
                 )
                 self.transformer = model.model  # Qwen2.5 uses 'model' attribute
                 if not hasattr(self.transformer, 'layers'):
@@ -87,7 +87,7 @@ class ToolInvocationEncoder(nn.Module):
             # Encoder model (BERT-style)
             self.transformer = AutoModel.from_pretrained(
                 model_name,
-                torch_dtype=dtype
+                dtype=dtype  # Use 'dtype' instead of deprecated 'torch_dtype'
             )
 
         if freeze_base:

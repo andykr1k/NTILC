@@ -56,7 +56,7 @@ class ToolInvocationDecoder(nn.Module):
 
         self.decoder = AutoModelForCausalLM.from_pretrained(
             model_name,
-            torch_dtype=dtype
+            dtype=dtype  # Use 'dtype' instead of deprecated 'torch_dtype'
         )
 
         # Enable gradient checkpointing to save memory (trades compute for memory)
