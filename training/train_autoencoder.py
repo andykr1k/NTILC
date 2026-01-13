@@ -85,7 +85,7 @@ def train_epoch(
 
     scaler = None
     if use_scaler:
-        scaler = torch.amp.GradScaler('cuda')
+        scaler = torch.amp.GradScaler('cuda', init_scale=32768.0)
         print("Using mixed precision training with GradScaler (FP32 -> FP16)")
     elif use_autocast:
         print("Using autocast for mixed precision (model already in FP16/BF16)")
