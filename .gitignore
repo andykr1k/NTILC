@@ -26,11 +26,15 @@ data/**
 checkpoints/**
 !checkpoints/
 !checkpoints/.gitkeep
+!checkpoints/**/
+!checkpoints/**/.gitkeep
 
 # output - ignore all files but keep directory structure
 output/**
 !output/
 !output/.gitkeep
+!output/**/
+!output/**/.gitkeep
 
 # Logs - ignore all files but keep directory structure
 logs/**
