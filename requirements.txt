@@ -9,7 +9,7 @@ numpy
 matplotlib
 seaborn
 scikit-learn
+scipy
 umap-learn
 plotly
 tqdm
-wandb

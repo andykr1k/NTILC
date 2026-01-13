@@ -20,7 +20,7 @@ class ToolInvocationEncoder(nn.Module):
     
     def __init__(
         self,
-        model_name: str = "bert-base-uncased",
+        model_name: str = "Qwen/Qwen2.5-1.5B-Instruct",
         embedding_dim: int = 512,
         pooling_strategy: str = "attention",
         dropout: float = 0.1,
@@ -40,15 +40,41 @@ class ToolInvocationEncoder(nn.Module):
         self.pooling_strategy = pooling_strategy
         
         # Load pretrained transformer
+        # Qwen2.5 is decoder-only, so we use AutoModelForCausalLM and access transformer
+        from transformers import AutoModelForCausalLM, AutoModel, AutoConfig
+        
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.transformer = AutoModel.from_pretrained(model_name)
+        config = AutoConfig.from_pretrained(model_name)
+        
+        # Determine if it's a decoder-only model (Qwen, GPT) or encoder model (BERT)
+        is_decoder_only = (
+            'qwen' in model_name.lower() or 
+            'gpt' in model_name.lower() or
+            hasattr(config, 'n_embd')  # GPT-2 style
+        )
+        
+        if is_decoder_only:
+            # Decoder-only model - use AutoModelForCausalLM and access transformer
+            model = AutoModelForCausalLM.from_pretrained(model_name)
+            self.transformer = model.model  # Qwen2.5 uses 'model' attribute, GPT-2 uses 'transformer'
+            if not hasattr(self.transformer, 'layers'):
+                # Try 'transformer' if 'model' doesn't work (GPT-2 style)
+                self.transformer = model.transformer
+        else:
+            # Encoder model (BERT-style)
+            self.transformer = AutoModel.from_pretrained(model_name)
         
         if freeze_base:
             for param in self.transformer.parameters():
                 param.requires_grad = False
         
-        # Get hidden dimension from transformer
-        hidden_dim = self.transformer.config.hidden_size
+        # Get hidden dimension
+        if hasattr(config, 'hidden_size'):
+            hidden_dim = config.hidden_size
+        elif hasattr(config, 'n_embd'):
+            hidden_dim = config.n_embd
+        else:
+            raise ValueError(f"Could not determine hidden dimension for model {model_name}")
         
         # Pooling layer (if attention pooling)
         if pooling_strategy == "attention":

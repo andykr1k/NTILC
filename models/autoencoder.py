@@ -22,8 +22,8 @@ class ToolInvocationAutoencoder(nn.Module):
     def __init__(
         self,
         embedding_dim: int = 512,
-        encoder_model: str = "bert-base-uncased",
-        decoder_model: str = "gpt2",
+        encoder_model: str = "Qwen/Qwen2.5-1.5B-Instruct",
+        decoder_model: str = "Qwen/Qwen2.5-1.5B-Instruct",
         pooling_strategy: str = "attention",
         max_length: int = 128,
         dropout: float = 0.1,

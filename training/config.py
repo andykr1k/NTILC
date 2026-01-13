@@ -12,9 +12,8 @@ class AutoencoderConfig:
     
     # Model architecture
     embedding_dim: int = 512
-    encoder_model: str = "bert-base-uncased"
-    decoder_model: str = "gpt2-medium"  # Upgraded from gpt2. Options: gpt2, gpt2-medium, gpt2-large, 
-                                         # gpt-neo-125M, gpt-neo-1.3B, opt-125m, opt-350m, opt-1.3b
+    encoder_model: str = "Qwen/Qwen2.5-1.5B-Instruct"  # Using Qwen2.5-1.5B for consistency
+    decoder_model: str = "Qwen/Qwen2.5-1.5B-Instruct"  # Using Qwen2.5-1.5B for consistency
     pooling_strategy: str = "attention"  # "mean", "cls", "max", "attention"
     max_length: int = 128
     dropout: float = 0.1

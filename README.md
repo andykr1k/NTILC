@@ -479,7 +479,10 @@ Mitigation:
 - Why is this problem is new and needed to be worked on?
     - Collect many related works and read through all the problem settings/intros
 - Prepare datasets and benchmarks
-- Take naive route (use bert encorder or chatgpt), add cross attention, then move onto training full stack
+- **Ablation Studies** (see `ablation/README.md`):
+    - Baseline 1: Naive prompting (tools in prompt)
+    - Baseline 2: Cross-attention LLM (architectural tool awareness)
+    - Compare baselines before full training
 - Implement autoencoder architecture
 - Build synthetic data generator
 - Train and evaluate autoencoder

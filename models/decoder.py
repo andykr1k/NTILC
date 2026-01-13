@@ -20,7 +20,7 @@ class ToolInvocationDecoder(nn.Module):
     def __init__(
         self,
         embedding_dim: int = 512,
-        model_name: str = "gpt2",
+        model_name: str = "Qwen/Qwen2.5-1.5B-Instruct",
         max_length: int = 128,
         dropout: float = 0.1,
         freeze_base: bool = False
