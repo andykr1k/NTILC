@@ -45,6 +45,7 @@ class AutoencoderConfig:
     # Paths
     output_dir: str = "./checkpoints"
     log_dir: str = "./logs"
+    data_dir: str = "./data"
 
     # Logging
     log_interval: int = 100

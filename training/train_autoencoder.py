@@ -322,6 +322,7 @@ def main():
             # Paths
             "paths/output_dir": config.output_dir,
             "paths/log_dir": config.log_dir,
+            "paths/data_dir": config.data_dir,
         }
 
         wandb.init(
@@ -338,6 +339,7 @@ def main():
     # Create output directories
     os.makedirs(config.output_dir, exist_ok=True)
     os.makedirs(config.log_dir, exist_ok=True)
+    os.makedirs(config.data_dir, exist_ok=True)
 
     # Create evaluation results directory
     eval_results_dir = os.path.join(
@@ -349,9 +351,9 @@ def main():
     data_config = DataGeneratorConfig()
     generator = ToolInvocationGenerator(data_config)
 
-    train_data_path = os.path.join(config.log_dir, "train_data.txt")
-    val_data_path = os.path.join(config.log_dir, "val_data.txt")
-    test_data_path = os.path.join(config.log_dir, "test_data.txt")
+    train_data_path = os.path.join(config.data_dir, "train_data.txt")
+    val_data_path = os.path.join(config.data_dir, "val_data.txt")
+    test_data_path = os.path.join(config.data_dir, "test_data.txt")
 
     if not os.path.exists(train_data_path):
         print(f"Generating {config.num_train_samples} training samples...")
