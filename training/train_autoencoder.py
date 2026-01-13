@@ -1,6 +1,12 @@
 """
 Training script for NTILC autoencoder.
 """
+import sys
+from pathlib import Path
+
+# Add project root to path BEFORE any other imports
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 from typing import Tuple, Dict, Union
 import wandb
 from tqdm import tqdm
@@ -14,13 +20,6 @@ from models.autoencoder import ToolInvocationAutoencoder
 from training.config import AutoencoderConfig
 from training.data_generator import ToolInvocationGenerator, DataGeneratorConfig
 from evaluation.metrics import compute_metrics
-import sys
-from pathlib import Path
-
-# Add project root to path BEFORE any other imports
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
-
 
 class ToolInvocationDataset(Dataset):
     """Dataset for tool invocation strings."""
