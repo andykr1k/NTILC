@@ -215,7 +215,7 @@ Phase 1 - Autoencoder (50 epochs):
 Phase 2 - LLM Integration (20 epochs):
 - Freeze autoencoder weights
 - Initialize tool prediction head
-- Learning rate: 5e-5
+- Learning rate: 2e-4
 - Loss: λ₁·LM_loss + λ₂·MSE(z_pred, z_target)
 - Balance hyperparameters λ₁, λ₂
 
