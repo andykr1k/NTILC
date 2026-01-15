@@ -2,7 +2,7 @@
 
 ## Overview
 
-NTILC introduces a novel approach to language model tool use by replacing text-based tool invocation with learned continuous embeddings. Instead of generating text like "search(query='cats', max_results=10)" which must be parsed, the model directly predicts a 512-dimensional embedding that encodes the complete tool invocation. This embedding is then decoded back into an executable tool call.
+NTILC introduces a novel approach to language model tool use by replacing text-based tool invocation with learned continuous embeddings. The core goal is to **predict the next tool call given previous tool calls and context**. Instead of generating text like "search(query='cats', max_results=10)" which must be parsed, the model directly predicts a 512-dimensional embedding that encodes the complete tool invocation. This embedding is then decoded back into an executable tool call.
 
 ## The Fundamental Problem
 
@@ -19,11 +19,12 @@ This approach has several limitations:
 
 ## Core Innovation
 
-NTILC learns a continuous embedding space for tool invocations where:
+NTILC learns a continuous embedding space for tool invocations to predict the **next tool call** given previous tool calls and context. The key innovations are:
 - Each tool call maps to a point in R^d (e.g., 512 dimensions)
-- Similar tool calls cluster together
-- A single prediction replaces sequence generation
+- Similar tool calls cluster together in embedding space
+- A single embedding prediction replaces sequential token generation
 - Embeddings are differentiable and semantically meaningful
+- The model learns to predict embeddings conditioned on conversation context and tool call history
 
 ### Information-Theoretic Foundation
 
@@ -38,9 +39,10 @@ A 512-dimensional float32 embedding has capacity of 512 × 32 = 16,384 bits, pro
 
 High-dimensional data (tool invocations) actually lie on a lower-dimensional manifold:
 - All possible strings: infinite dimensional
-- Valid tool invocations: structured su    Architecture:
+- Valid tool invocations:
     - Encoder: ToolCall → R^d
-    - Decoder: R^d → ToolCallts=?) calls form a 2D manifold where:
+    - Decoder: R^d → ToolCall 
+This form a 2D manifold where:
 - One dimension captures query semantics
 - Another dimension captures result count
 
@@ -65,19 +67,14 @@ Decoder: ψ_φ: R^d → ToolCall
 Training objective:
 L_reconstruction = -Σᵢ log P(xᵢ | x₁, ..., xᵢ₋₁, z)
 
-This is sequence-to-sequence learning with an iA tool invocation contains:
-- Tool identity: log₂(|T|) bits (e.g., ~3 bits for 6 tools)
-- Parameters: Σᵢ I(pᵢ|T) bits (e.g., ~50-200 bits for text query)
-- Total: ~60-210 bits of information
-
-A 512-dimensional float32 embedding has capacity of 512 × 32 = 16,384 bits, providing ~100x overhead. This massive redundancy ensures lossless compression is theoretically achievable.nformation bottleneck that forces the model to learn efficient representations.
+This is sequence-to-sequence learning with an information bottleneck that forces the model to learn efficient representations.
 
 ### Phase 2: LLM Integration
 
-Once the autoencoder is trained, we integrate with an LLM:
+Once the autoencoder is trained, we integrate with an LLM to predict the **next tool call** given previous tool calls and context:
 
 Standard LLM: P(token_t | context)
-NTILC LLM: P(token_t | context) ∪ P(embedding | context)
+NTILC LLM: P(token_t | context) ∪ P(embedding | context, previous_tool_calls)
 
 The model learns to predict tool embeddings at appropriate points:
 
@@ -86,32 +83,41 @@ At each position t with hidden state h_t:
 - Tool path: z_predicted = W_tool · h_t
 
 Training:
-- Conversation context → LLM hidden state h_t
-- Ground truth tool call → autoencoder embedding z_target
+- Input context includes:
+  - Conversation history (user queries, responses)
+  - Previous tool calls: [tool_call₁, tool_call₂, ..., tool_callₙ₋₁]
+  - Current state/context
+- LLM processes context → hidden state h_t
+- Ground truth next tool call → autoencoder embedding z_target
 - Loss: MSE(z_predicted, z_target)
-- Backprop updates LLM to predict correct embeddings
+- Backprop updates LLM to predict correct embeddings for the next tool call
 
 ### Complete Data Flow
 
-Training autoencoder:
+**Training autoencoder:**
 1. Input: "search(query='machine learning', max_results=10)"
 2. Tokenize: [42, 123, 456, ...]
 3. Encode: Transformer → h_avg → z = [0.23, -0.45, 0.67, ..., 0.12]
 4. Decode: z → h₀ → autoregressively generate tokens
-5. Loss: CrossEntropy(generated, origi    Architecture:
-    - Encoder: ToolCall → R^d
-    - Decoder: R^d → ToolCallsformer papers', max_results=10)"
-3. Encode ground truth: z_target = [0.25, -0.43, ...]
-4. LLM predicts: z_predicted = W_tool · LLM(context)
-5. Loss: MSE(z_predicted, z_target)
+5. Loss: CrossEntropy(generated, original)
 
-Inference:
+**Training LLM integration:**
+1. Input context: conversation history + previous tool calls [tool_call₁, ..., tool_callₙ₋₁]
+2. Ground truth next tool call: "search(query='transformer papers', max_results=10)"
+3. Encode ground truth: z_target = φ_θ(ground_truth) = [0.25, -0.43, ...]
+4. LLM processes context → h_t
+5. LLM predicts: z_predicted = W_tool · h_t
+6. Loss: MSE(z_predicted, z_target)
+
+**Inference (predicting next tool call):**
 1. User: "Find me recent AI news"
-2. LLM processes context → h_t
-3. Predict: z = W_tool · h_t
-4. Decode: tool_call = Decoder(z) → "search(query='recent AI news', max_results=10)"
-5. Execute tool call
-6. Return results to LLM
+2. Context includes: previous tool calls (if any) + conversation history
+3. LLM processes context → h_t
+4. Predict next tool call embedding: z = W_tool · h_t
+5. Decode: tool_call = Decoder(z) → "search(query='recent AI news', max_results=10)"
+6. Execute tool call
+7. Add executed tool call to history for next prediction
+8. Return results to LLM
 
 ## Why This Works: Theoretical Foundations
 
@@ -122,12 +128,7 @@ Neural networks can approximate any continuous function, so given sufficient dim
 Such that ψ(φ(x)) ≈ x
 
 ### 2. Information Bottleneck
-The bottleneck forces the model to:A tool invocation contains:
-- Tool identity: log₂(|T|) bits (e.g., ~3 bits for 6 tools)
-- Parameters: Σᵢ I(pᵢ|T) bits (e.g., ~50-200 bits for text query)
-- Total: ~60-210 bits of information
-
-A 512-dimensional float32 embedding has capacity of 512 × 32 = 16,384 bits, providing ~100x overhead. This massive redundancy ensures lossless compression is theoretically achievable.
+The bottleneck forces the model to:
 - Discard irrelevant information
 - Preserve task-critical information
 - Learn invariances (e.g., "cat" ≈ "cats")
@@ -135,9 +136,7 @@ A 512-dimensional float32 embedding has capacity of 512 × 32 = 16,384 bits, pro
 This is a classic principle from information theory: compress while preserving task-relevant structure.
 
 ### 3. Continuous Optimization
-Unlike discrete token prediction    Architecture:
-    - Encoder: ToolCall → R^d
-    - Decoder: R^d → ToolCallgh entire pipeline
+Unlike discrete token prediction, continuous embeddings enable smooth gradients throughout the entire pipeline, making optimization easier and more stable.
 
 ### 4. Semantic Geometry
 Continuous spaces enable:
@@ -182,7 +181,7 @@ Create synthetic training data covering:
 Tool schemas:
 - search(query: str, max_results: int, date_filter: Optional[DateRange])
 - calculate(expression: str)
-- database_query(sql: str, https://api.github.com/users',timeout: int)
+- database_query(sql: str, timeout: int)
 - send_email(to: email, subject: str, body: str, cc: Optional[List[email]])
 - web_fetch(url: str, method: enum["GET", "POST"])
 - file_read(path: str, encoding: str)
@@ -201,9 +200,10 @@ Start with Question:
 
 Start with Tool Call:
 - Grab MCP server configs
-- Parse config to our structure    Architecture:
-    - Encoder: ToolCall → R^d
-    - Decoder: R^d → ToolCall
+- Parse config to our structure
+
+**Training Configuration:**
+
 Phase 1 - Autoencoder (50 epochs):
 - Batch size: 64
 - Learning rate: 1e-4
@@ -229,11 +229,12 @@ Autoencoder quality:
     - Robustness to context variations
 
 End-to-end system:
+- Next tool call prediction accuracy (given previous tool calls and context)
 - Tool selection accuracy
 - Parameter correctness (exact match)
-    - Take methods from previous work (How are LLMS "accuracy" measure?)
+    - Take methods from previous work (How are LLMs "accuracy" measured?)
 - Parameter correctness (semantic similarity for strings)
-    - Take methods from previous work (How are LLMS "accuracy" measure?)
+    - Take methods from previous work (How are LLMs "accuracy" measured?)
 - Latency vs text baseline
 - Total energy usage (watts used)
 
@@ -293,10 +294,11 @@ Hypothesis: Extend to sequence of embeddings: [z₁, z₂, z₃, ...] for comple
 Definitions:
 - X: Space of tool invocations (strings)
 - Z ⊂ R^d: Embedding space
-- C: Context space (conversation history)
+- C: Context space (conversation history + previous tool calls)
+- H: History of previous tool calls [x₁, x₂, ..., xₙ₋₁]
 - φ_θ: X → Z (encoder with parameters θ)
 - ψ_φ: Z → X (decoder with parameters φ)
-- f_ω: C → Z (LLM tool predictor with parameters ω)
+- f_ω: (C, H) → Z (LLM tool predictor with parameters ω, predicts next tool call embedding)
 
 Phase 1 Objective (Autoencoder):
 min_{θ,φ} E_{x~p(X)} [L_recon(x, ψ_φ(φ_θ(x)))]
@@ -304,15 +306,20 @@ min_{θ,φ} E_{x~p(X)} [L_recon(x, ψ_φ(φ_θ(x)))]
 Where L_recon = -Σᵢ log P(xᵢ | x₁, ..., xᵢ₋₁, z)
 
 Phase 2 Objective (LLM Integration):
-min_ω E_{(c,x)~p(C,X)} [||f_ω(c) - φ_θ(x)||²₂]
+min_ω E_{(c,h,x)~p(C,H,X)} [||f_ω(c, h) - φ_θ(x)||²₂]
 
-Where φ_θ is frozen from Phase 1
+Where:
+- c is the conversation context
+- h = [x₁, ..., xₙ₋₁] is the history of previous tool calls
+- x is the ground truth next tool call
+- φ_θ is frozen from Phase 1
 
-Inference:
-Given context c:
-1. z = f_ω(c)
-2. x̂ = ψ_φ(z)
+Inference (predicting next tool call):
+Given context c and previous tool calls h:
+1. z = f_ω(c, h)  (predict next tool call embedding)
+2. x̂ = ψ_φ(z)  (decode to tool call string)
 3. Execute(x̂)
+4. Add x̂ to history h for next prediction
 
 ## Comparison to Related Work
 

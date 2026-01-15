@@ -17,8 +17,8 @@ class AutoencoderConfig:
     pooling_strategy: str = "attention"  # "mean", "cls", "max", "attention"
     max_length: int = 128
     dropout: float = 0.1
-    freeze_encoder: bool = False
-    freeze_decoder: bool = False
+    freeze_encoder: bool = True
+    freeze_decoder: bool = True
 
     # Training hyperparameters
     batch_size: int = 64
@@ -42,7 +42,7 @@ class AutoencoderConfig:
     # Paths
     output_dir: str = "./checkpoints"
     log_dir: str = "./logs"
-    data_dir: str = "./data"
+    data_dir: str = "./data/train"
 
     # Logging
     log_interval: int = 100
