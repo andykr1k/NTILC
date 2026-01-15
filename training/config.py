@@ -21,7 +21,7 @@ class AutoencoderConfig:
     freeze_decoder: bool = False
 
     # Training hyperparameters
-    batch_size: int = 32
+    batch_size: int = 64
     learning_rate: float = 1e-5
     weight_decay: float = 0.01
     num_epochs: int = 50
