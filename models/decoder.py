@@ -37,6 +37,9 @@ class ToolInvocationDecoder(nn.Module):
             dtype = torch.bfloat16
         else:
             dtype = torch.float32
+        
+        # Store dtype for later use
+        self.dtype = dtype
 
         # Load T5 or other encoder-decoder model
         try:
@@ -103,6 +106,9 @@ class ToolInvocationDecoder(nn.Module):
                 nn.init.ones_(module.weight)
                 nn.init.zeros_(module.bias)
 
+        # Convert projection layer to correct dtype
+        self.embedding_projection = self.embedding_projection.to(dtype)
+
         # REMOVED: initial_token_embedding is not needed with T5's built-in decoder_start_token_id
 
     def forward(
@@ -121,6 +127,9 @@ class ToolInvocationDecoder(nn.Module):
             print(f"Embeddings stats: min={embeddings.min()}, max={embeddings.max()}, mean={embeddings.mean()}")
             # Clamp to prevent propagation
             embeddings = torch.clamp(embeddings, min=-10.0, max=10.0)
+
+        # Convert embeddings to correct dtype before projection
+        embeddings = embeddings.to(self.dtype)
 
         # Project embedding to encoder hidden dimension
         projected = self.embedding_projection(embeddings)
