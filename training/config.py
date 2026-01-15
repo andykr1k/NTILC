@@ -11,11 +11,9 @@ class AutoencoderConfig:
     """Configuration for autoencoder training."""
 
     # Model architecture
-    embedding_dim: int = 512
-    # Using Qwen2.5-1.5B for consistency
-    encoder_model: str = "Qwen/Qwen2.5-1.5B-Instruct"
-    # Using Qwen2.5-1.5B for consistency
-    decoder_model: str = "Qwen/Qwen2.5-1.5B-Instruct"
+    embedding_dim: int = 256
+    encoder_model: str = "google/flan-t5-base"
+    decoder_model: str = "google/flan-t5-base"
     pooling_strategy: str = "attention"  # "mean", "cls", "max", "attention"
     max_length: int = 128
     dropout: float = 0.1
@@ -23,19 +21,19 @@ class AutoencoderConfig:
     freeze_decoder: bool = False
 
     # Training hyperparameters
-    batch_size: int = 32  # Reduced from 64 to save memory
-    learning_rate: float = 2e-4  # Increased from 1e-4 for better convergence
+    batch_size: int = 32
+    learning_rate: float = 1e-5
     weight_decay: float = 0.01
     num_epochs: int = 50
-    warmup_steps: int = 600
-    gradient_clip: float = 1.0
+    warmup_steps: int = 1000
+    gradient_clip: float = 0.5
     use_lr_scheduler: bool = True  # Use cosine annealing with warmup
 
     # Memory optimization
     use_mixed_precision: bool = True  # Use FP16/BF16 to halve memory usage
     use_gradient_checkpointing: bool = True  # Trade compute for memory
     # "float16" or "bfloat16" (bfloat16 more stable)
-    torch_dtype: str = "float32"
+    torch_dtype: str = "bfloat16"
 
     # Data
     num_train_samples: int = 100000

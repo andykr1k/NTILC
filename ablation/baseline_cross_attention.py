@@ -6,7 +6,7 @@ Add cross-attention mechanism to make LLM aware of tool embeddings.
 import torch
 import torch.nn as nn
 from typing import List, Optional, Dict
-from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
+from transformers import AutoTokenizer, T5ForConditionalGeneration, AutoConfig
 import math
 from tqdm import tqdm
 from multiprocessing import Process, Queue
@@ -68,12 +68,13 @@ def _cross_attention_worker_process(gpu_id, queries, prompts_list, result_queue,
             padding=True
         ).to(device)
         
-        # Generate for batch
+        # Generate for batch (T5 uses encoder-decoder generation)
         generated = model.generate(
             input_ids=inputs["input_ids"],
             attention_mask=inputs.get("attention_mask"),
-            max_length=max_length,
-            temperature=temperature
+            max_new_tokens=max_length,
+            temperature=temperature,
+            do_sample=True
         )
         
         # Decode and extract for each in batch
@@ -167,24 +168,24 @@ class ToolEmbeddingEncoder(nn.Module):
     Creates embeddings from example tool calls for each tool type.
     """
     
-    def __init__(self, d_model: int, num_tools: int, base_model_name: str = "Qwen/Qwen2.5-1.5B-Instruct"):
+    def __init__(self, d_model: int, num_tools: int, base_model_name: str = "google/flan-t5-base"):
         super().__init__()
         self.num_tools = num_tools
         self.d_model = d_model
         self.base_model_name = base_model_name
         
-        # Load Qwen tokenizer and model
-        from transformers import AutoTokenizer, AutoModelForCausalLM
+        # Load T5 tokenizer and model
+        from transformers import AutoTokenizer, T5EncoderModel
         self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
-        self.qwen_model = AutoModelForCausalLM.from_pretrained(base_model_name)
+        self.t5_encoder = T5EncoderModel.from_pretrained(base_model_name)
         
         # Get the hidden size from the model config
-        if hasattr(self.qwen_model.config, 'hidden_size'):
-            encoder_dim = self.qwen_model.config.hidden_size
-        elif hasattr(self.qwen_model.config, 'n_embd'):
-            encoder_dim = self.qwen_model.config.n_embd
+        if hasattr(self.t5_encoder.config, 'd_model'):
+            encoder_dim = self.t5_encoder.config.d_model
+        elif hasattr(self.t5_encoder.config, 'hidden_size'):
+            encoder_dim = self.t5_encoder.config.hidden_size
         else:
-            encoder_dim = self.qwen_model.config.d_model if hasattr(self.qwen_model.config, 'd_model') else 2048
+            encoder_dim = 2048
         
         # Project to desired dimension
         self.projection = nn.Linear(encoder_dim, d_model)
@@ -202,7 +203,7 @@ class ToolEmbeddingEncoder(nn.Module):
     def to(self, device):
         """Move model to device."""
         super().to(device)
-        self.qwen_model = self.qwen_model.to(device)
+        self.t5_encoder = self.t5_encoder.to(device)
         self.projection = self.projection.to(device)
         # Clear cache when moving devices
         self._cached_embeddings = None
@@ -279,7 +280,7 @@ class ToolEmbeddingEncoder(nn.Module):
     
     def _encode_tool_call(self, tool_call_str: str, device: torch.device) -> torch.Tensor:
         """
-        Encode a tool call string into an embedding using Qwen.
+        Encode a tool call string into an embedding using T5 encoder.
         
         Args:
             tool_call_str: String like "search(query='machine learning', max_results=10)"
@@ -301,11 +302,14 @@ class ToolEmbeddingEncoder(nn.Module):
         inputs = {k: v.to(device) for k, v in inputs.items()}
         
         with torch.no_grad():
-            # Get model outputs
-            outputs = self.qwen_model(**inputs, output_hidden_states=True)
+            # Get encoder outputs
+            outputs = self.t5_encoder(
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs.get("attention_mask")
+            )
             
             # Use mean pooling over all token embeddings
-            hidden_states = outputs.hidden_states[-1]  # Last layer
+            hidden_states = outputs.last_hidden_state  # (batch_size, seq_len, hidden_dim)
             
             # Mean pooling over sequence length
             attention_mask = inputs.get('attention_mask', None)
@@ -332,9 +336,9 @@ class ToolEmbeddingEncoder(nn.Module):
         """
         device = next(self.projection.parameters()).device
         
-        # Ensure Qwen model is on the correct device
-        if next(self.qwen_model.parameters()).device != device:
-            self.qwen_model = self.qwen_model.to(device)
+        # Ensure T5 encoder is on the correct device
+        if next(self.t5_encoder.parameters()).device != device:
+            self.t5_encoder = self.t5_encoder.to(device)
         
         # Cache embeddings if not already computed
         if self._cached_embeddings is None or self._cached_embeddings.device != device:
@@ -379,7 +383,7 @@ class CrossAttentionLLM(nn.Module):
     
     def __init__(
         self,
-        base_model_name: str = "Qwen/Qwen2.5-1.5B-Instruct",
+        base_model_name: str = "google/flan-t5-base",
         num_tools: int = 6,
         cross_attention_layers: int = 1,
         num_heads: int = 8,
@@ -400,10 +404,15 @@ class CrossAttentionLLM(nn.Module):
         self.base_model_name = base_model_name
         self.num_tools = num_tools
         
-        # Load base model
+        # Load tokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+        
+        # Load base model (T5 encoder-decoder)
         config = AutoConfig.from_pretrained(base_model_name)
-        self.base_model = AutoModelForCausalLM.from_pretrained(base_model_name)
-        self.d_model = config.hidden_size if hasattr(config, 'hidden_size') else config.n_embd
+        self.base_model = T5ForConditionalGeneration.from_pretrained(base_model_name)
+        self.d_model = config.d_model if hasattr(config, 'd_model') else (config.hidden_size if hasattr(config, 'hidden_size') else config.n_embd)
         
         if freeze_base:
             for param in self.base_model.parameters():
@@ -459,22 +468,15 @@ class CrossAttentionLLM(nn.Module):
         Returns:
             Dictionary with logits and loss
         """
-        # Get base model hidden states
-        # FIX: Use getattr with proper fallback
-        if hasattr(self.base_model, 'model'):
-            transformer = self.base_model.model
-        elif hasattr(self.base_model, 'transformer'):
-            transformer = self.base_model.transformer
-        else:
-            raise AttributeError(f"Model {self.base_model_name} does not have 'model' or 'transformer' attribute")
-        
-        transformer_outputs = transformer(
+        # Get base model encoder outputs (T5)
+        # T5 uses encoder-decoder architecture
+        encoder_outputs = self.base_model.encoder(
             input_ids=input_ids,
             attention_mask=attention_mask
         )
         
         # Get hidden states (last layer)
-        hidden_states = transformer_outputs.last_hidden_state  # (batch, seq_len, d_model)
+        hidden_states = encoder_outputs.last_hidden_state  # (batch, seq_len, d_model)
         
         # Get tool embeddings
         tool_embeddings = self.tool_encoder()  # (num_tools, d_model)
@@ -482,25 +484,50 @@ class CrossAttentionLLM(nn.Module):
             hidden_states.shape[0], -1, -1
         )  # (batch, num_tools, d_model)
         
-        # Apply cross-attention layers
+        # Apply cross-attention layers to encoder outputs
         x = hidden_states
         for cross_attn in self.cross_attention_layers:
             attn_output = cross_attn(x, tool_embeddings, attention_mask=None)
             x = self.layer_norm(x + attn_output)  # Residual connection
         
-        # Project to vocabulary
-        logits = self.base_model.lm_head(x)
+        # Create BaseModelOutput for modified encoder outputs
+        from transformers.modeling_outputs import BaseModelOutput
+        encoder_outputs_obj = BaseModelOutput(
+            last_hidden_state=x,
+            hidden_states=None,
+            attentions=None
+        )
         
-        # Compute loss if labels provided
-        loss = None
+        # Forward through T5 model with modified encoder outputs
         if labels is not None:
-            loss_fct = nn.CrossEntropyLoss()
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            loss = loss_fct(
-                shift_logits.view(-1, shift_logits.size(-1)),
-                shift_labels.view(-1)
+            # Training: use teacher forcing
+            # T5 expects decoder_input_ids to be labels shifted right
+            decoder_start_token_id = self.base_model.config.decoder_start_token_id
+            if decoder_start_token_id is None:
+                decoder_start_token_id = self.tokenizer.pad_token_id
+            
+            batch_size = labels.shape[0]
+            device = labels.device
+            # Create decoder_input_ids: [decoder_start_token_id, labels[:-1]]
+            decoder_input_ids = torch.cat([
+                torch.full((batch_size, 1), decoder_start_token_id, dtype=torch.long, device=device),
+                labels[:, :-1]
+            ], dim=1)
+            
+            outputs = self.base_model(
+                encoder_outputs=encoder_outputs_obj,
+                attention_mask=attention_mask,
+                decoder_input_ids=decoder_input_ids,
+                labels=labels
             )
+            logits = outputs.logits
+        else:
+            # Inference: we'll handle in generate method
+            # For now, return None logits
+            logits = None
+        
+        # Get loss from outputs if available
+        loss = outputs.loss if hasattr(outputs, 'loss') else None
         
         return {
             "logits": logits,
@@ -527,41 +554,45 @@ class CrossAttentionLLM(nn.Module):
             **kwargs: Additional generation kwargs
             
         Returns:
-            Generated token ids
+            Generated token ids (includes input_ids + generated tokens)
         """
         self.eval()
         with torch.no_grad():
-            batch_size = input_ids.shape[0]
-            generated = input_ids.clone()
-            eos_token_id = self.base_model.config.eos_token_id
+            # Get encoder outputs with cross-attention applied
+            encoder_outputs = self.base_model.encoder(
+                input_ids=input_ids,
+                attention_mask=attention_mask
+            )
+            hidden_states = encoder_outputs.last_hidden_state
             
-            # Track which sequences are finished
-            finished = torch.zeros(batch_size, dtype=torch.bool, device=input_ids.device)
+            # Get tool embeddings and apply cross-attention
+            tool_embeddings = self.tool_encoder()
+            tool_embeddings = tool_embeddings.unsqueeze(0).expand(
+                hidden_states.shape[0], -1, -1
+            )
             
-            for _ in range(max_length - input_ids.shape[1]):
-                outputs = self.forward(
-                    input_ids=generated,
-                    attention_mask=attention_mask
-                )
-                
-                logits = outputs["logits"][:, -1, :] / temperature
-                probs = torch.softmax(logits, dim=-1)
-                next_token = torch.multinomial(probs, num_samples=1)
-                
-                generated = torch.cat([generated, next_token], dim=1)
-                
-                if attention_mask is not None:
-                    attention_mask = torch.cat([
-                        attention_mask,
-                        torch.ones((attention_mask.shape[0], 1), device=attention_mask.device)
-                    ], dim=1)
-                
-                # Check for EOS tokens (handle batched case)
-                finished = finished | (next_token.squeeze(-1) == eos_token_id)
-                
-                # Stop if all sequences are finished
-                if finished.all():
-                    break
+            x = hidden_states
+            for cross_attn in self.cross_attention_layers:
+                attn_output = cross_attn(x, tool_embeddings, attention_mask=None)
+                x = self.layer_norm(x + attn_output)
+            
+            # Create BaseModelOutput for modified encoder outputs
+            from transformers.modeling_outputs import BaseModelOutput
+            encoder_outputs_obj = BaseModelOutput(
+                last_hidden_state=x,
+                hidden_states=None,
+                attentions=None
+            )
+            
+            # Use T5's generate method with modified encoder outputs
+            generated = self.base_model.generate(
+                encoder_outputs=encoder_outputs_obj,
+                attention_mask=attention_mask,
+                max_new_tokens=max_length,
+                temperature=temperature,
+                do_sample=True,
+                **kwargs
+            )
             
             return generated
 
@@ -573,7 +604,7 @@ class CrossAttentionBaseline:
     
     def __init__(
         self,
-        model_name: str = "Qwen/Qwen2.5-1.5B-Instruct",
+        model_name: str = "google/flan-t5-base",
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         num_tools: int = 6,
         cross_attention_layers: int = 1,
@@ -596,8 +627,6 @@ class CrossAttentionBaseline:
         
         print(f"Loading cross-attention model: {model_name}")
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        # Set left padding for decoder-only models
-        self.tokenizer.padding_side = 'left'
         self.model_name = model_name
         self.num_tools = num_tools
         self.cross_attention_layers = cross_attention_layers
@@ -724,8 +753,9 @@ class CrossAttentionBaseline:
                 generated = model.generate(
                     input_ids=inputs["input_ids"],
                     attention_mask=inputs.get("attention_mask"),
-                    max_length=self.max_length,
-                    temperature=self.temperature
+                    max_new_tokens=self.max_length,
+                    temperature=self.temperature,
+                    do_sample=True
                 )
                 
                 for prompt, gen_ids in zip(batch_prompts, generated):

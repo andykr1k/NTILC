@@ -4,7 +4,7 @@ Encoder module for NTILC: Transforms tool invocation strings into continuous emb
 
 import torch
 import torch.nn as nn
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModel, T5EncoderModel, AutoConfig
 
 
 class ToolInvocationEncoder(nn.Module):
@@ -20,7 +20,7 @@ class ToolInvocationEncoder(nn.Module):
 
     def __init__(
         self,
-        model_name: str = "Qwen/Qwen2.5-1.5B-Instruct",
+        model_name: str = "google/flan-t5-base",
         embedding_dim: int = 512,
         pooling_strategy: str = "attention",
         dropout: float = 0.1,
@@ -29,7 +29,7 @@ class ToolInvocationEncoder(nn.Module):
     ):
         """
         Args:
-            model_name: HuggingFace model name for base transformer
+            model_name: HuggingFace model name for base encoder (should be encoder-decoder like T5)
             embedding_dim: Dimension of output embedding (d)
             pooling_strategy: One of ["mean", "cls", "max", "attention"]
             dropout: Dropout rate
@@ -40,10 +40,7 @@ class ToolInvocationEncoder(nn.Module):
         self.embedding_dim = embedding_dim
         self.pooling_strategy = pooling_strategy
 
-        # Load pretrained transformer
-        # Qwen2.5 is decoder-only, so we use AutoModelForCausalLM and access transformer
-        from transformers import AutoModelForCausalLM, AutoModel, AutoConfig
-
+        # Load pretrained encoder-decoder model and extract encoder
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         config = AutoConfig.from_pretrained(model_name)
 
@@ -55,39 +52,35 @@ class ToolInvocationEncoder(nn.Module):
         else:
             dtype = torch.float32
 
-        # Determine if it's a decoder-only model (Qwen, GPT) or encoder model (BERT)
-        is_decoder_only = (
-            'qwen' in model_name.lower() or
-            'gpt' in model_name.lower() or
-            hasattr(config, 'n_embd')  # GPT-2 style
-        )
-
-        if is_decoder_only:
-            # Decoder-only model - load only the base model, not the full CausalLM (saves memory)
-            # Use AutoModel to avoid loading the LM head we don't need
-            try:
-                # Try loading base model directly (Qwen2.5 supports this)
-                self.transformer = AutoModel.from_pretrained(
+        # For T5/encoder-decoder models, load the encoder part
+        # T5 models have an encoder attribute
+        try:
+            # Try loading T5 encoder directly
+            if 't5' in model_name.lower() or 'flan-t5' in model_name.lower():
+                self.transformer = T5EncoderModel.from_pretrained(
                     model_name,
-                    dtype=dtype  # Use 'dtype' instead of deprecated 'torch_dtype'
+                    torch_dtype=dtype
                 )
-            except:
-                # Fallback: load CausalLM but only keep transformer
-                model = AutoModelForCausalLM.from_pretrained(
+            else:
+                # For other encoder-decoder models, try to get encoder
+                from transformers import AutoModelForSeq2SeqLM
+                full_model = AutoModelForSeq2SeqLM.from_pretrained(
                     model_name,
-                    dtype=dtype  # Use 'dtype' instead of deprecated 'torch_dtype'
+                    torch_dtype=dtype
                 )
-                self.transformer = model.model  # Qwen2.5 uses 'model' attribute
-                if not hasattr(self.transformer, 'layers'):
-                    # Try 'transformer' if 'model' doesn't work (GPT-2 style)
-                    self.transformer = model.transformer
-                # Delete the full model to free memory (LM head not needed)
-                del model
-        else:
-            # Encoder model (BERT-style)
-            self.transformer = AutoModel.from_pretrained(
-                model_name,
-                dtype=dtype  # Use 'dtype' instead of deprecated 'torch_dtype'
+                # Extract encoder from the model
+                if hasattr(full_model, 'encoder'):
+                    self.transformer = full_model.encoder
+                elif hasattr(full_model, 'model') and hasattr(full_model.model, 'encoder'):
+                    self.transformer = full_model.model.encoder
+                else:
+                    raise ValueError(f"Could not extract encoder from {model_name}")
+                # Delete full model to save memory
+                del full_model
+        except Exception as e:
+            raise ValueError(
+                f"Failed to load encoder from {model_name}: {e}. "
+                "Please use an encoder-decoder model like T5 or BART."
             )
 
         if freeze_base:
@@ -95,7 +88,9 @@ class ToolInvocationEncoder(nn.Module):
                 param.requires_grad = False
 
         # Get hidden dimension
-        if hasattr(config, 'hidden_size'):
+        if hasattr(config, 'd_model'):
+            hidden_dim = config.d_model  # T5 uses d_model
+        elif hasattr(config, 'hidden_size'):
             hidden_dim = config.hidden_size
         elif hasattr(config, 'n_embd'):
             hidden_dim = config.n_embd
@@ -145,7 +140,11 @@ class ToolInvocationEncoder(nn.Module):
         encoded = {k: v.to(device) for k, v in encoded.items()}
 
         # Get transformer outputs
-        outputs = self.transformer(**encoded)
+        # For T5 encoder, we pass input_ids and attention_mask
+        outputs = self.transformer(
+            input_ids=encoded["input_ids"],
+            attention_mask=encoded["attention_mask"]
+        )
         # (batch_size, seq_len, hidden_dim)
         hidden_states = outputs.last_hidden_state
         attention_mask = encoded["attention_mask"]  # (batch_size, seq_len)
@@ -155,6 +154,9 @@ class ToolInvocationEncoder(nn.Module):
 
         # Project to embedding dimension
         embeddings = self.projection(pooled)
+        
+        # Clamp to prevent extreme values that could cause NaN
+        embeddings = torch.clamp(embeddings, min=-10.0, max=10.0)
 
         return embeddings
 

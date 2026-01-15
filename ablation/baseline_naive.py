@@ -5,7 +5,7 @@ Simply provide tools in the prompt and ask LLM to generate tool calls.
 
 import re
 from typing import List, Dict, Optional
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, T5ForConditionalGeneration
 import torch
 from tqdm import tqdm
 from multiprocessing import Process, Queue
@@ -141,7 +141,7 @@ def _extract_tool_call(text: str, prompt: str = "") -> str:
 def _naive_worker_process(gpu_id, queries, prompts_list, result_queue, progress_queue, model_name, max_length, temperature, batch_size=8):
     """Worker process that runs on a specific GPU (module-level for pickling)."""
     import torch
-    from transformers import AutoTokenizer, AutoModelForCausalLM
+    from transformers import AutoTokenizer, T5ForConditionalGeneration
     
     # Set CUDA device for this process
     device = f"cuda:{gpu_id}"
@@ -149,9 +149,7 @@ def _naive_worker_process(gpu_id, queries, prompts_list, result_queue, progress_
     
     # Load model and tokenizer in this process
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    # Set left padding for decoder-only models
-    tokenizer.padding_side = 'left'
-    model = AutoModelForCausalLM.from_pretrained(model_name)
+    model = T5ForConditionalGeneration.from_pretrained(model_name)
     model.to(device)
     model.eval()
     
@@ -174,10 +172,11 @@ def _naive_worker_process(gpu_id, queries, prompts_list, result_queue, progress_
             padding=True
         ).to(device)
         
-        # Generate for batch
+        # Generate for batch (T5 uses encoder-decoder generation)
         with torch.no_grad():
             outputs = model.generate(
-                **inputs,
+                inputs["input_ids"],
+                attention_mask=inputs.get("attention_mask"),
                 max_new_tokens=max_length,
                 temperature=temperature,
                 do_sample=True,
@@ -210,7 +209,7 @@ class NaivePromptingBaseline:
     
     def __init__(
         self,
-        model_name: str = "Qwen/Qwen2.5-1.5B-Instruct",
+        model_name: str = "google/flan-t5-base",
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         max_length: int = 256,
         temperature: float = 0.7,
@@ -244,8 +243,6 @@ class NaivePromptingBaseline:
         
         print(f"Loading model: {model_name}")
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        # Set left padding for decoder-only models
-        self.tokenizer.padding_side = 'left'
         
         # Create model instances for each GPU
         self.models = []
@@ -255,14 +252,14 @@ class NaivePromptingBaseline:
             print(f"Creating {self.num_gpus} model instances for multi-GPU inference")
             for gpu_id in range(self.num_gpus):
                 device = f"cuda:{gpu_id}"
-                model = AutoModelForCausalLM.from_pretrained(model_name)
+                model = T5ForConditionalGeneration.from_pretrained(model_name)
                 model.to(device)
                 model.eval()
                 self.models.append(model)
                 self.devices.append(device)
         else:
             # Single GPU or CPU
-            model = AutoModelForCausalLM.from_pretrained(model_name)
+            model = T5ForConditionalGeneration.from_pretrained(model_name)
             model.to(device)
             model.eval()
             self.models = [model]
@@ -328,10 +325,11 @@ class NaivePromptingBaseline:
             max_length=512
         ).to(self.device)
         
-        # Generate
+        # Generate (T5 uses encoder-decoder generation)
         with torch.no_grad():
             outputs = self.model.generate(
-                **inputs,
+                inputs["input_ids"],
+                attention_mask=inputs.get("attention_mask"),
                 max_new_tokens=self.max_length,
                 temperature=self.temperature,
                 do_sample=True,
@@ -381,7 +379,8 @@ class NaivePromptingBaseline:
                 
                 with torch.no_grad():
                     outputs = self.model.generate(
-                        **inputs,
+                        inputs["input_ids"],
+                        attention_mask=inputs.get("attention_mask"),
                         max_new_tokens=self.max_length,
                         temperature=self.temperature,
                         do_sample=True,

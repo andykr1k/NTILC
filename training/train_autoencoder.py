@@ -10,7 +10,7 @@ sys.path.insert(0, str(project_root))
 from typing import Tuple, Dict, Union
 import wandb
 from tqdm import tqdm
-from transformers import GPT2Tokenizer
+from transformers import AutoTokenizer
 from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
 import torch
@@ -24,7 +24,7 @@ from evaluation.metrics import compute_metrics
 class ToolInvocationDataset(Dataset):
     """Dataset for tool invocation strings."""
 
-    def __init__(self, tool_calls: list[str], tokenizer: GPT2Tokenizer, max_length: int = 128):
+    def __init__(self, tool_calls: list[str], tokenizer: AutoTokenizer, max_length: int = 128):
         """
         Args:
             tool_calls: List of tool invocation strings
@@ -68,115 +68,178 @@ def train_epoch(
     global_step: int,
     scheduler=None
 ) -> Tuple[Dict[str, float], int]:
-    """Train for one epoch."""
+    """Train for one epoch with NaN detection and prevention."""
     model.train()
     total_loss = 0.0
     num_batches = 0
     total_grad_norm = 0.0
+    nan_count = 0
 
     progress_bar = tqdm(dataloader, desc="Training")
 
-    # Setup mixed precision training if enabled
-    # Note: If models are already loaded in FP16/BF16, we use autocast but NOT GradScaler
-    # GradScaler is only for FP32 models that get converted to FP16 during forward pass
+    # FIXED: Mixed precision handling
+    # For models already in FP16/BF16, we only use autocast, NOT GradScaler
     use_autocast = config.use_mixed_precision and device.type == "cuda"
-    # Only use scaler for FP32 models
-    use_scaler = use_autocast and config.torch_dtype == "float32"
-
-    scaler = None
-    if use_scaler:
-        scaler = torch.amp.GradScaler('cuda', init_scale=32768.0)
-        print("Using mixed precision training with GradScaler (FP32 -> FP16)")
-    elif use_autocast:
-        print("Using autocast for mixed precision (model already in FP16/BF16)")
+    use_scaler = False  # NEVER use scaler with pre-loaded FP16/BF16 models
+    
+    # Determine autocast dtype based on model dtype
+    if use_autocast:
+        if config.torch_dtype == "bfloat16":
+            autocast_dtype = torch.bfloat16
+            print("Using autocast with bfloat16")
+        elif config.torch_dtype == "float16":
+            autocast_dtype = torch.float16
+            print("Using autocast with float16")
+        else:
+            # For float32, we can use GradScaler
+            autocast_dtype = torch.float16
+            use_scaler = True
+            scaler = torch.amp.GradScaler('cuda', init_scale=2**10)  # Lower initial scale
+            print("Using mixed precision training with GradScaler (FP32 -> FP16)")
+    
+    scaler = scaler if use_scaler else None
 
     for batch_idx, batch in enumerate(progress_bar):
         tool_calls = batch["tool_call"]
         target_ids = batch["input_ids"].to(device)
         attention_mask = batch["attention_mask"].to(device)
 
+        # ADDED: Check for NaN in inputs
+        if torch.isnan(target_ids.float()).any():
+            print(f"Warning: NaN detected in input at batch {batch_idx}")
+            continue
+
         # Forward pass with mixed precision
         if use_autocast:
-            with torch.amp.autocast('cuda'):
+            with torch.amp.autocast('cuda', dtype=autocast_dtype):
                 outputs = model(
                     tool_calls=tool_calls,
                     target_ids=target_ids,
                     attention_mask=attention_mask
                 )
-                # (batch_size, seq_len-1, vocab_size)
                 logits = outputs["logits"]
+                
+                # ADDED: Check for NaN/Inf in logits
+                if torch.isnan(logits).any() or torch.isinf(logits).any():
+                    print(f"Warning: NaN/Inf in logits at batch {batch_idx}")
+                    print(f"Logits stats: min={logits.min()}, max={logits.max()}, mean={logits.mean()}")
+                    nan_count += 1
+                    if nan_count > 5:
+                        raise ValueError("Too many NaN occurrences, stopping training")
+                    continue
 
-                # Shift targets for next-token prediction (what we're predicting)
-                targets = target_ids[:, 1:]  # (batch_size, seq_len-1)
-                target_mask = attention_mask[:, 1:]  # (batch_size, seq_len-1)
+                targets = target_ids
+                target_mask = attention_mask
 
-                # Compute loss (only on non-padding tokens)
+                # Compute loss
                 loss_per_token = criterion(
                     logits.reshape(-1, logits.size(-1)),
                     targets.reshape(-1)
-                )  # (batch * seq,)
+                )
 
-                # Mask out padding tokens and compute mean
                 mask_flat = target_mask.reshape(-1).float()
-                loss = (loss_per_token * mask_flat).sum() / \
-                    (mask_flat.sum() + 1e-8)
+                loss = (loss_per_token * mask_flat).sum() / (mask_flat.sum() + 1e-8)
+                
+                # ADDED: Check for NaN loss
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"Warning: NaN/Inf loss at batch {batch_idx}")
+                    print(f"Loss value: {loss.item()}")
+                    print(f"Logits stats: min={logits.min()}, max={logits.max()}")
+                    print(f"Embeddings stats: min={outputs['embeddings'].min()}, max={outputs['embeddings'].max()}")
+                    nan_count += 1
+                    if nan_count > 5:
+                        raise ValueError("Too many NaN losses, stopping training")
+                    continue
         else:
             outputs = model(
                 tool_calls=tool_calls,
                 target_ids=target_ids,
                 attention_mask=attention_mask
             )
-            logits = outputs["logits"]  # (batch_size, seq_len-1, vocab_size)
+            logits = outputs["logits"]
+            
+            # ADDED: Same NaN checks for non-autocast path
+            if torch.isnan(logits).any() or torch.isinf(logits).any():
+                print(f"Warning: NaN/Inf in logits at batch {batch_idx}")
+                nan_count += 1
+                if nan_count > 5:
+                    raise ValueError("Too many NaN occurrences, stopping training")
+                continue
 
-            # Shift targets for next-token prediction (what we're predicting)
-            targets = target_ids[:, 1:]  # (batch_size, seq_len-1)
-            target_mask = attention_mask[:, 1:]  # (batch_size, seq_len-1)
+            targets = target_ids
+            target_mask = attention_mask
 
-            # Compute loss (only on non-padding tokens)
             loss_per_token = criterion(
                 logits.reshape(-1, logits.size(-1)),
                 targets.reshape(-1)
-            )  # (batch * seq,)
+            )
 
-            # Mask out padding tokens and compute mean
             mask_flat = target_mask.reshape(-1).float()
-            loss = (loss_per_token * mask_flat).sum() / \
-                (mask_flat.sum() + 1e-8)
+            loss = (loss_per_token * mask_flat).sum() / (mask_flat.sum() + 1e-8)
+            
+            if torch.isnan(loss) or torch.isinf(loss):
+                print(f"Warning: NaN/Inf loss at batch {batch_idx}")
+                nan_count += 1
+                if nan_count > 5:
+                    raise ValueError("Too many NaN losses, stopping training")
+                continue
 
         # Backward pass
         optimizer.zero_grad()
 
         if scaler is not None:
-            # Use scaler for FP32 models with automatic mixed precision
             scaler.scale(loss).backward()
-            # Gradient clipping with scaler
             scaler.unscale_(optimizer)
             grad_norm = torch.nn.utils.clip_grad_norm_(
                 model.parameters(), config.gradient_clip)
+            
+            # ADDED: Check for NaN gradients
+            if torch.isnan(grad_norm):
+                print(f"Warning: NaN gradient norm at batch {batch_idx}")
+                nan_count += 1
+                optimizer.zero_grad()
+                continue
+                
             scaler.step(optimizer)
             scaler.update()
-            # Update learning rate scheduler AFTER optimizer.step()
             if scheduler is not None:
                 scheduler.step()
         else:
-            # Standard backward pass (works for both FP32 and FP16 models)
             loss.backward()
-            # Gradient clipping and tracking
+            
+            # ADDED: Check gradients before clipping
+            has_nan_grad = False
+            for name, param in model.named_parameters():
+                if param.grad is not None:
+                    if torch.isnan(param.grad).any() or torch.isinf(param.grad).any():
+                        print(f"Warning: NaN/Inf gradient in {name}")
+                        has_nan_grad = True
+                        break
+            
+            if has_nan_grad:
+                nan_count += 1
+                optimizer.zero_grad()
+                if nan_count > 5:
+                    raise ValueError("Too many NaN gradients, stopping training")
+                continue
+            
             grad_norm = torch.nn.utils.clip_grad_norm_(
                 model.parameters(), config.gradient_clip)
             optimizer.step()
-            # Update learning rate scheduler AFTER optimizer.step()
             if scheduler is not None:
                 scheduler.step()
 
         total_grad_norm += grad_norm.item()
-
         total_loss += loss.item()
         num_batches += 1
         current_step = global_step + batch_idx
 
         # Update progress bar
-        progress_bar.set_postfix({"loss": loss.item()})
+        progress_bar.set_postfix({
+            "loss": loss.item(),
+            "grad_norm": grad_norm.item(),
+            "nan_count": nan_count
+        })
 
         # Logging
         if batch_idx % config.log_interval == 0:
@@ -186,7 +249,8 @@ def train_epoch(
                     "train/grad_norm": grad_norm.item(),
                     "train/learning_rate": optimizer.param_groups[0]['lr'],
                     "train/step": current_step,
-                    "train/epoch": epoch
+                    "train/epoch": epoch,
+                    "train/nan_count": nan_count
                 }
                 wandb.log(log_dict, step=current_step)
 
@@ -194,7 +258,11 @@ def train_epoch(
     avg_grad_norm = total_grad_norm / num_batches if num_batches > 0 else 0.0
 
     new_global_step = global_step + len(dataloader)
-    return {"loss": avg_loss, "grad_norm": avg_grad_norm}, new_global_step
+    return {
+        "loss": avg_loss, 
+        "grad_norm": avg_grad_norm,
+        "nan_count": nan_count
+    }, new_global_step
 
 
 def evaluate(
@@ -385,9 +453,10 @@ def main():
         test_tool_calls = generator.generate_dataset(config.num_test_samples)
         generator.save_dataset(test_tool_calls, test_data_path)
 
-    # Initialize tokenizer
-    tokenizer = GPT2Tokenizer.from_pretrained(config.decoder_model)
-    tokenizer.pad_token = tokenizer.eos_token
+    # Initialize tokenizer (use T5 tokenizer for encoder-decoder models)
+    tokenizer = AutoTokenizer.from_pretrained(config.decoder_model)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
     # Create datasets
     train_dataset = ToolInvocationDataset(
