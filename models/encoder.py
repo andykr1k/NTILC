@@ -51,6 +51,9 @@ class ToolInvocationEncoder(nn.Module):
             dtype = torch.bfloat16
         else:
             dtype = torch.float32
+        
+        # Store dtype for later use
+        self.dtype = dtype
 
         # For T5/encoder-decoder models, load the encoder part
         # T5 models have an encoder attribute
@@ -156,6 +159,9 @@ class ToolInvocationEncoder(nn.Module):
         # Pool hidden states
         pooled = self._pool(hidden_states, attention_mask)
 
+        # Convert pooled tensor to correct dtype before projection
+        pooled = pooled.to(self.dtype)
+
         # Project to embedding dimension
         embeddings = self.projection(pooled)
         
@@ -175,9 +181,12 @@ class ToolInvocationEncoder(nn.Module):
         Returns:
             pooled: (batch_size, hidden_dim)
         """
+        # Get dtype from hidden_states to maintain consistency
+        mask_dtype = hidden_states.dtype
+        
         if self.pooling_strategy == "mean":
             # Mean pooling (masked)
-            mask_expanded = attention_mask.unsqueeze(-1).float()
+            mask_expanded = attention_mask.unsqueeze(-1).to(dtype=mask_dtype)
             sum_hidden = (hidden_states * mask_expanded).sum(dim=1)
             sum_mask = mask_expanded.sum(dim=1).clamp(min=1e-9)
             return sum_hidden / sum_mask
@@ -188,7 +197,7 @@ class ToolInvocationEncoder(nn.Module):
 
         elif self.pooling_strategy == "max":
             # Max pooling (masked)
-            mask_expanded = attention_mask.unsqueeze(-1).float()
+            mask_expanded = attention_mask.unsqueeze(-1).to(dtype=mask_dtype)
             # Set padding to very negative value
             masked_hidden = hidden_states * \
                 mask_expanded - (1 - mask_expanded) * 1e9
@@ -198,7 +207,7 @@ class ToolInvocationEncoder(nn.Module):
             # Attention-weighted pooling
             attention_weights = self.attention_pool(
                 hidden_states)  # (batch_size, seq_len, 1)
-            mask_expanded = attention_mask.unsqueeze(-1).float()
+            mask_expanded = attention_mask.unsqueeze(-1).to(dtype=mask_dtype)
             attention_weights = attention_weights * mask_expanded
             attention_weights = attention_weights / \
                 (attention_weights.sum(dim=1, keepdim=True) + 1e-9)
