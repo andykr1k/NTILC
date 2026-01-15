@@ -25,7 +25,7 @@ class ToolInvocationEncoder(nn.Module):
         pooling_strategy: str = "attention",
         dropout: float = 0.1,
         freeze_base: bool = False,
-        torch_dtype: str = "float32"
+        torch_dtype: str = "bfloat16"
     ):
         """
         Args:
@@ -107,6 +107,7 @@ class ToolInvocationEncoder(nn.Module):
                 nn.Softmax(dim=1)
             )
 
+
         # Projection to embedding dimension
         self.projection = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim * 2),
@@ -115,6 +116,9 @@ class ToolInvocationEncoder(nn.Module):
             nn.Linear(hidden_dim * 2, embedding_dim),
             nn.LayerNorm(embedding_dim)
         )
+
+        self.attention_pool = self.attention_pool.to(dtype)
+        self.projection = self.projection.to(dtype)
 
     def forward(self, tool_calls: list[str]) -> torch.Tensor:
         """

@@ -30,7 +30,6 @@ class AutoencoderConfig:
     use_lr_scheduler: bool = True  # Use cosine annealing with warmup
 
     # Memory optimization
-    use_mixed_precision: bool = True  # Use FP16/BF16 to halve memory usage
     use_gradient_checkpointing: bool = True  # Trade compute for memory
     # "float16" or "bfloat16" (bfloat16 more stable)
     torch_dtype: str = "bfloat16"

@@ -29,7 +29,7 @@ class ToolInvocationAutoencoder(nn.Module):
         dropout: float = 0.1,
         freeze_encoder: bool = False,
         freeze_decoder: bool = False,
-        torch_dtype: str = "float32",
+        torch_dtype: str = "bfloat16",
         use_gradient_checkpointing: bool = False
     ):
         """

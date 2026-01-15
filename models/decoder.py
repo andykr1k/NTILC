@@ -16,7 +16,7 @@ class ToolInvocationDecoder(nn.Module):
         max_length: int = 128,
         dropout: float = 0.1,
         freeze_base: bool = False,
-        torch_dtype: str = "float32",
+        torch_dtype: str = "bfloat16",
         use_gradient_checkpointing: bool = False
     ):
         super().__init__()

@@ -77,28 +77,6 @@ def train_epoch(
 
     progress_bar = tqdm(dataloader, desc="Training")
 
-    # FIXED: Mixed precision handling
-    # For models already in FP16/BF16, we only use autocast, NOT GradScaler
-    use_autocast = config.use_mixed_precision and device.type == "cuda"
-    use_scaler = False  # NEVER use scaler with pre-loaded FP16/BF16 models
-    
-    # Determine autocast dtype based on model dtype
-    if use_autocast:
-        if config.torch_dtype == "bfloat16":
-            autocast_dtype = torch.bfloat16
-            print("Using autocast with bfloat16")
-        elif config.torch_dtype == "float16":
-            autocast_dtype = torch.float16
-            print("Using autocast with float16")
-        else:
-            # For float32, we can use GradScaler
-            autocast_dtype = torch.float16
-            use_scaler = True
-            scaler = torch.amp.GradScaler('cuda', init_scale=2**10)  # Lower initial scale
-            print("Using mixed precision training with GradScaler (FP32 -> FP16)")
-    
-    scaler = scaler if use_scaler else None
-
     for batch_idx, batch in enumerate(progress_bar):
         tool_calls = batch["tool_call"]
         target_ids = batch["input_ids"].to(device)
@@ -109,125 +87,79 @@ def train_epoch(
             print(f"Warning: NaN detected in input at batch {batch_idx}")
             continue
 
-        # Forward pass with mixed precision
-        if use_autocast:
-            with torch.amp.autocast('cuda', dtype=autocast_dtype):
-                outputs = model(
-                    tool_calls=tool_calls,
-                    target_ids=target_ids,
-                    attention_mask=attention_mask
-                )
-                logits = outputs["logits"]
-                
-                # ADDED: Check for NaN/Inf in logits
-                if torch.isnan(logits).any() or torch.isinf(logits).any():
-                    print(f"Warning: NaN/Inf in logits at batch {batch_idx}")
-                    print(f"Logits stats: min={logits.min()}, max={logits.max()}, mean={logits.mean()}")
-                    nan_count += 1
-                    if nan_count > 5:
-                        raise ValueError("Too many NaN occurrences, stopping training")
-                    continue
+        # Forward pass
+        outputs = model(
+            tool_calls=tool_calls,
+            target_ids=target_ids,
+            attention_mask=attention_mask
+        )
+        logits = outputs["logits"]
+        
+        # Check for NaN/Inf in logits
+        if torch.isnan(logits).any() or torch.isinf(logits).any():
+            print(f"Warning: NaN/Inf in logits at batch {batch_idx}")
+            print(f"Logits stats: min={logits.min()}, max={logits.max()}, mean={logits.mean()}")
+            nan_count += 1
+            if nan_count > 5:
+                raise ValueError("Too many NaN occurrences, stopping training")
+            continue
 
-                targets = target_ids
-                target_mask = attention_mask
+        targets = target_ids
+        target_mask = attention_mask
 
-                # Compute loss
-                loss_per_token = criterion(
-                    logits.reshape(-1, logits.size(-1)),
-                    targets.reshape(-1)
-                )
+        # Compute loss
+        loss_per_token = criterion(
+            logits.reshape(-1, logits.size(-1)),
+            targets.reshape(-1)
+        )
 
-                mask_flat = target_mask.reshape(-1).float()
-                loss = (loss_per_token * mask_flat).sum() / (mask_flat.sum() + 1e-8)
-                
-                # ADDED: Check for NaN loss
-                if torch.isnan(loss) or torch.isinf(loss):
-                    print(f"Warning: NaN/Inf loss at batch {batch_idx}")
-                    print(f"Loss value: {loss.item()}")
-                    print(f"Logits stats: min={logits.min()}, max={logits.max()}")
-                    print(f"Embeddings stats: min={outputs['embeddings'].min()}, max={outputs['embeddings'].max()}")
-                    nan_count += 1
-                    if nan_count > 5:
-                        raise ValueError("Too many NaN losses, stopping training")
-                    continue
-        else:
-            outputs = model(
-                tool_calls=tool_calls,
-                target_ids=target_ids,
-                attention_mask=attention_mask
-            )
-            logits = outputs["logits"]
-            
-            # ADDED: Same NaN checks for non-autocast path
-            if torch.isnan(logits).any() or torch.isinf(logits).any():
-                print(f"Warning: NaN/Inf in logits at batch {batch_idx}")
-                nan_count += 1
-                if nan_count > 5:
-                    raise ValueError("Too many NaN occurrences, stopping training")
-                continue
-
-            targets = target_ids
-            target_mask = attention_mask
-
-            loss_per_token = criterion(
-                logits.reshape(-1, logits.size(-1)),
-                targets.reshape(-1)
-            )
-
-            mask_flat = target_mask.reshape(-1).float()
-            loss = (loss_per_token * mask_flat).sum() / (mask_flat.sum() + 1e-8)
-            
-            if torch.isnan(loss) or torch.isinf(loss):
-                print(f"Warning: NaN/Inf loss at batch {batch_idx}")
-                nan_count += 1
-                if nan_count > 5:
-                    raise ValueError("Too many NaN losses, stopping training")
-                continue
+        mask_flat = target_mask.reshape(-1).float()
+        loss = (loss_per_token * mask_flat).sum() / (mask_flat.sum() + 1e-8)
+        
+        # Check for NaN loss
+        if torch.isnan(loss) or torch.isinf(loss):
+            print(f"Warning: NaN/Inf loss at batch {batch_idx}")
+            print(f"Loss value: {loss.item()}")
+            print(f"Logits stats: min={logits.min()}, max={logits.max()}")
+            print(f"Embeddings stats: min={outputs['embeddings'].min()}, max={outputs['embeddings'].max()}")
+            nan_count += 1
+            if nan_count > 5:
+                raise ValueError("Too many NaN losses, stopping training")
+            continue
 
         # Backward pass
         optimizer.zero_grad()
-
-        if scaler is not None:
-            scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                model.parameters(), config.gradient_clip)
-            
-            # ADDED: Check for NaN gradients
-            if torch.isnan(grad_norm):
-                print(f"Warning: NaN gradient norm at batch {batch_idx}")
-                nan_count += 1
-                optimizer.zero_grad()
-                continue
-                
-            scaler.step(optimizer)
-            scaler.update()
-            if scheduler is not None:
-                scheduler.step()
-        else:
-            loss.backward()
-            
-            # ADDED: Check gradients before clipping
-            has_nan_grad = False
-            for name, param in model.named_parameters():
-                if param.grad is not None:
-                    if torch.isnan(param.grad).any() or torch.isinf(param.grad).any():
-                        print(f"Warning: NaN/Inf gradient in {name}")
-                        has_nan_grad = True
-                        break
-            
-            if has_nan_grad:
-                nan_count += 1
-                optimizer.zero_grad()
-                if nan_count > 5:
-                    raise ValueError("Too many NaN gradients, stopping training")
-                continue
-            
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                model.parameters(), config.gradient_clip)
-            optimizer.step()
-            if scheduler is not None:
-                scheduler.step()
+        loss.backward()
+        
+        # ADDED: Check gradients before clipping
+        has_nan_grad = False
+        for name, param in model.named_parameters():
+            if param.grad is not None:
+                if torch.isnan(param.grad).any() or torch.isinf(param.grad).any():
+                    print(f"Warning: NaN/Inf gradient in {name}")
+                    has_nan_grad = True
+                    break
+        
+        if has_nan_grad:
+            nan_count += 1
+            optimizer.zero_grad()
+            if nan_count > 5:
+                raise ValueError("Too many NaN gradients, stopping training")
+            continue
+        
+        grad_norm = torch.nn.utils.clip_grad_norm_(
+            model.parameters(), config.gradient_clip)
+        
+        # ADDED: Check for NaN gradients
+        if torch.isnan(grad_norm):
+            print(f"Warning: NaN gradient norm at batch {batch_idx}")
+            nan_count += 1
+            optimizer.zero_grad()
+            continue
+        
+        optimizer.step()
+        if scheduler is not None:
+            scheduler.step()
 
         total_grad_norm += grad_norm.item()
         total_loss += loss.item()
@@ -386,7 +318,6 @@ def main():
             "early_stopping/min_delta": config.early_stopping_min_delta,
 
             # Memory optimization
-            "memory/use_mixed_precision": config.use_mixed_precision,
             "memory/use_gradient_checkpointing": config.use_gradient_checkpointing,
             "memory/torch_dtype": config.torch_dtype,
 
@@ -397,6 +328,7 @@ def main():
             "logging/use_wandb": config.use_wandb,
             "logging/wandb_project": config.wandb_project,
             "logging/wandb_entity": config.wandb_entity,
+            "logging/wandb_run_name": run_name,  # Log the actual run name used
 
             # Paths
             "paths/output_dir": config.output_dir,
@@ -502,7 +434,6 @@ def main():
     print("Initializing model...")
     print(f"Using torch_dtype: {config.torch_dtype}")
     print(f"Using gradient checkpointing: {config.use_gradient_checkpointing}")
-    print(f"Using mixed precision: {config.use_mixed_precision}")
     model = ToolInvocationAutoencoder(
         embedding_dim=config.embedding_dim,
         encoder_model=config.encoder_model,
