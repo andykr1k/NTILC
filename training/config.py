@@ -11,7 +11,7 @@ class AutoencoderConfig:
     """Configuration for autoencoder training."""
 
     # Model architecture
-    embedding_dim: int = 256
+    embedding_dim: int = 512
     encoder_model: str = "google/flan-t5-base"
     decoder_model: str = "google/flan-t5-base"
     pooling_strategy: str = "attention"  # "mean", "cls", "max", "attention"
@@ -24,7 +24,7 @@ class AutoencoderConfig:
     batch_size: int = 64
     learning_rate: float = 1e-5
     weight_decay: float = 0.01
-    num_epochs: int = 50
+    num_epochs: int = 10
     warmup_steps: int = 1000
     gradient_clip: float = 0.5
     use_lr_scheduler: bool = True  # Use cosine annealing with warmup
@@ -38,6 +38,10 @@ class AutoencoderConfig:
     num_train_samples: int = 100000
     num_val_samples: int = 10000
     num_test_samples: int = 10000
+
+    # Loss
+    use_validity_loss: bool = False
+    validity_loss_weights: Optional[float] = None
 
     # Paths
     output_dir: str = "./checkpoints"
