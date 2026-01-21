@@ -128,7 +128,7 @@ class AutoencoderConfig:
     
     # Data
     output_format: str = "json"  # "json" or "python"
-    num_train_samples: int = 1000000
+    num_train_samples: int = 250000
     
     # Wandb
     use_wandb: bool = True
