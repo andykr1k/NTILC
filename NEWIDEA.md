@@ -1,16 +1,18 @@
+# Neural Tool Invocation vie Learned Compression (Refined)
+
 ## High-Level Idea
 
 At a high level, the system works as follows:
 
-1. Represent tool *intents* as points/manifolds in a high-dimensional embedding space
-2. Project these embeddings into a compact metric space optimized for similarity
-3. Use metric learning (circle loss) to form soft clusters of tool usage patterns
-4. Match user queries to clusters instead of directly predicting tools
-5. Map clusters to concrete tools using a symbolic software layer
-6. Infer which arguments are needed
-7. Generate argument values using appropriate generative mechanisms
+1. Represent tool *intents* as points/manifolds in a high-dimensional embedding space.  
+2. Project these embeddings into a compact metric space optimized for similarity.  
+3. Use metric learning, primarily **Circle Loss**, to form soft clusters of tool usage patterns.  
+4. Match user queries to clusters, obtaining a **cluster ID**, instead of generating full tool calls.  
+5. Map cluster IDs to concrete tools using a symbolic software layer that contains all mappings and indices.  
+6. Infer which arguments are needed.  
+7. Generate argument values using appropriate generative or deterministic mechanisms, only for the arguments themselves.  
 
-This separates **what task is being requested** from **how it is executed**.
+This separates **what task is requested** from **how it is executed**, eliminating the need for a model decoder for tool calls.
 
 ---
 
@@ -20,34 +22,30 @@ This separates **what task is being requested** from **how it is executed**.
 
 **Purpose:** Encode semantic intent behind tool usage.
 
-Each tool is represented not as raw JSON, but as a *canonicalized intent object*:
+Each tool is represented as a *canonicalized intent object*, including:
 
-* Tool name
-* Tool description
-* Argument schema
-* Example calls
-* Natural language paraphrases of intent
+* Tool name  
+* Tool description  
+* Argument schema  
+* Example calls  
+* Natural language paraphrases  
 
-These are embedded into a high-dimensional space (e.g. 1024-D) to preserve semantic richness.
+These are embedded into a high-dimensional space (e.g., 1024-D) to preserve semantic richness.
 
-**Why high-dimensional?**
+**Adding new tools:**  
 
-* Captures subtle distinctions between similar tools
-* Allows tools to occupy manifolds rather than single points
+- New tools can be inserted via a **key vector** in the frozen space.  
+- Only the new vector is trained using Circle Loss; existing clusters remain untouched.  
 
 ---
 
 ### 2. Projection Head (1024 → 128)
 
-**Purpose:** Create a geometry-friendly space for similarity learning.
+**Purpose:** Map embeddings to a geometry-friendly space for similarity computation.
 
-A learned projection maps embeddings into a smaller space (e.g. 128-D) optimized using contrastive objectives.
-
-* Acts as a semantic bottleneck
-* Encourages functional equivalence classes
-* Improves clustering stability
-
-This space is *not* used for storage—only for similarity and loss computation.
+* Maps high-dimensional embeddings into a 128-D space.  
+* Optimized with contrastive and Circle Loss objectives.  
+* Not used for storage—only for similarity and loss computation.
 
 ---
 
@@ -55,141 +53,83 @@ This space is *not* used for storage—only for similarity and loss computation.
 
 **Purpose:** Form soft clusters of tool usage.
 
-Circle loss is used to:
+Circle Loss is used to:
 
-* Pull semantically equivalent tool intents together
-* Push unrelated intents apart
-* Preserve angular margins between clusters
+* Pull semantically equivalent tool intents together.  
+* Push unrelated intents apart.  
+* Preserve angular margins between clusters.  
 
-Important properties:
+**Key properties for retrieval-only design:**
 
-* Clusters are **soft**, not mutually exclusive
-* A query can be close to multiple clusters
-* Similarity scores are continuous
-
-This naturally models overlapping tool functionality.
+* Clusters are **soft**, not mutually exclusive.  
+* Hard positives/negatives drive the embedding, enabling robust cluster formation.  
+* New tools can be added by optimizing a **single embedding** without retraining existing ones.  
 
 ---
 
-### 4. Query Inference
+### 4. Query Inference (Cluster Retrieval Only)
 
-At inference time:
+At inference:
 
-1. User query is embedded into the same 1024-D space
-2. Projected into 128-D
-3. Similarity is computed against all cluster centroids or prototypes
+1. User query → embed in 1024-D space → project to 128-D.  
+2. Compute similarity against all cluster centroids or prototypes.  
+3. **Select top cluster(s)** → return **cluster ID(s)**.  
 
-Output:
+> No decoder or autoregressive generation is used. The cluster ID directly indexes the software layer.
 
-* Top-k cluster matches
-* Confidence / similarity scores
+**Output:**
 
-No hard argmax is required at this stage.
+* Cluster ID(s)  
+* Similarity / confidence score  
 
 ---
 
 ### 5. Cluster-to-Tool Mapping Layer (Software Layer)
 
-**Purpose:** Decouple learned geometry from execution logic.
+**Purpose:** Decouple model from execution.
 
-This symbolic layer:
+* Maps cluster IDs to one or more tools  
+* Maintains versioning, safety rules, and permissions  
+* Handles tool indices, arguments, and any overlying business logic  
 
-* Maps clusters to one or more tools
-* Handles tool versioning
-* Applies business rules, permissions, safety checks
-* Allows tools to change without retraining embeddings
-
-This is where **system control lives**, not inside the model.
+> All tool execution is handled here — the model only retrieves the correct cluster.
 
 ---
 
 ### 6. Argument Inference
 
-Argument handling is explicitly decomposed.
+Arguments are handled **separately from tool selection**:
 
 #### Route A: Argument Necessity Detection
 
-For each candidate tool:
-
-* Determine whether each argument is:
-
-  * Required
-  * Optional
-  * Irrelevant
-
-This is treated as a **classification problem**, not generation.
-
-Possible implementations:
-
-* Per-tool argument classifiers
-* Schema-aware attention masks
-* Learned argument gates
-
----
+* For each candidate tool, classify arguments as required, optional, or irrelevant.  
 
 #### Route B: Argument Value Generation
 
-Only arguments deemed relevant proceed to value generation.
+* Only relevant arguments are generated or extracted.  
+* Methods:
+  * Deterministic extraction (IDs, strings)  
+  * Autoregressive generation for enums or short text  
+  * Diffusion or continuous-value generation for coordinates, layouts, or latent parameters  
 
-Possible generation routes:
-
-1. **Deterministic extraction**
-
-   * IDs
-   * Strings explicitly present in the query
-
-2. **Autoregressive generation**
-
-   * Enums
-   * Booleans
-   * Short text fields
-
-3. **Diffusion-based generation (optional)**
-
-   * Continuous values
-   * Underspecified or multi-modal arguments
-   * Spatial, temporal, or configuration-like parameters
-
-Arguments marked irrelevant are explicitly set to `null`.
+Arguments marked irrelevant are set to `null`.
 
 ---
 
 ### 7. Diffusion (Optional, Targeted Use)
 
-Diffusion is used only where appropriate.
+Used only for continuous, multi-modal, or under-specified argument values (e.g., coordinates, layouts, time windows).  
 
-Good use cases:
-
-* Coordinates
-* Time windows
-* Layouts
-* Latent configuration vectors
-
-Not recommended for:
-
-* Discrete symbols
-* Identifiers
-* Fixed schemas
-
-A hybrid argument generator is encouraged.
+**Not used** for discrete symbols or fixed schema arguments.
 
 ---
 
 ### 8. Null / Abstention Path
 
-The system includes an explicit **no-tool / clarification** route.
+Explicit **no-tool / clarification** route:
 
-If:
-
-* All cluster similarities fall below a threshold
-* Or argument necessity cannot be resolved
-
-Then:
-
-* No tool is invoked
-* The system requests clarification or responds in natural language
-
-This prevents over-invocation.
+* Triggered if all cluster similarities fall below a threshold or argument necessity is ambiguous.  
+* Outcome: no tool invoked; system requests clarification.  
 
 ---
 
@@ -197,44 +137,52 @@ This prevents over-invocation.
 
 ### Data Requirements
 
-* Synthetic and real tool invocation examples
-* Paraphrased intents per tool
-* Positive and negative intent pairs
-* Argument relevance labels
+* Synthetic and real tool invocation examples  
+* Paraphrased intents per tool  
+* Positive and negative intent pairs  
+* Argument relevance labels  
+
+---
 
 ### Objectives
 
-* Contrastive loss on projected embeddings
-* Circle loss for cluster geometry
-* Optional auxiliary losses for argument necessity
+* **Contrastive loss** for global embedding structure.  
+* **Circle loss** for cluster geometry and new tool injection.  
+* Optional auxiliary losses for argument necessity.
+
+**New tool workflow (retrieval-only):**  
+
+1. Encoder frozen.  
+2. Optimize only the new tool embedding via Circle Loss.  
+3. Return cluster ID for retrieval — no decoder needed.  
 
 ---
 
 ## All Possible Execution Routes
 
-1. **Single confident cluster → single tool → deterministic arguments**
-2. **Multiple clusters → arbitration → best tool**
-3. **Single tool → partial arguments → request clarification**
-4. **Single tool → missing continuous arguments → diffusion generation**
-5. **Low similarity → no tool → natural language response**
-6. **Overlapping clusters → multi-tool plan (future extension)**
+1. Single confident cluster → single tool → deterministic argument generation  
+2. Multiple clusters → arbitration → best tool  
+3. Single tool → partial arguments → request clarification  
+4. Single tool → missing continuous arguments → diffusion generation  
+5. Low similarity → no tool → natural language response  
+6. Overlapping clusters → multi-tool plan (future extension)  
 
 ---
 
 ## Why This Approach
 
-* Removes brittle prompt-based control
-* Improves interpretability and debuggability
-* Scales to large tool libraries
-* Separates learning from system logic
-* Matches the geometry of real-world tasks
+* Removes brittle decoder-based tool generation  
+* Improves speed and efficiency — cluster lookup is near-instant  
+* Preserves interpretability and debuggability  
+* Allows new tools to be added without retraining the encoder  
+* Matches the geometry of real-world tool usage  
 
 ---
 
 ## Future Directions
 
-* Multi-step tool planning across clusters
-* Dynamic cluster creation
-* Online adaptation of cluster centroids
-* Tool composition graphs
-* Reinforcement learning on execution success
+* Multi-step tool planning across clusters  
+* Dynamic cluster creation  
+* Online adaptation of cluster centroids  
+* Tool composition graphs  
+* Reinforcement learning on execution success  
