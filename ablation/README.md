@@ -8,23 +8,40 @@ We compare three approaches in progressive order:
 
 1. **Baseline 1: Naive Prompting** - Simply provide tools in the prompt and ask LLM to generate tool calls
 2. **Baseline 2: Cross-Attention LLM** - Add cross-attention mechanism to make LLM aware of tool embeddings
-3. **Full Training** - Complete autoencoder + LLM integration (Phase 1 + Phase 2)
+3. **Full NTILC System** - Complete autoencoder + LLM integration (Phase 1 + Phase 2)
 
-## Why This Approach?
+## Data Format
 
-This ablation study helps us understand:
-- **Baseline performance**: How well can a standard LLM do with just prompting?
-- **Cross-attention benefit**: Does architectural awareness of tools help?
-- **Full system value**: What additional benefit does the learned embedding space provide?
+The ablation studies support both Python-style and JSON format tool calls:
+
+**Python format:**
+```
+search(query='machine learning', max_results=10)
+```
+
+**JSON format (recommended):**
+```json
+{"tool": "search", "arguments": {"query": "machine learning", "max_results": 10}}
+```
+
+Use `--output_format json` to match the main training pipeline format.
 
 ## Quick Start
 
 ### 1. Generate Test Data
 
 ```bash
+# Generate JSON format data (recommended - matches main training)
 python -m ablation.generate_ablation_data \
-    --num_samples 100 \
-    --output ./data/ablation/test_data.jsonl
+    --num_samples 500 \
+    --output ./data/ablation/test_data.jsonl \
+    --output_format json
+
+# Or Python format for legacy compatibility
+python -m ablation.generate_ablation_data \
+    --num_samples 500 \
+    --output ./data/ablation/test_data_python.jsonl \
+    --output_format python
 ```
 
 ### 2. Run Ablation Studies
@@ -32,11 +49,10 @@ python -m ablation.generate_ablation_data \
 ```bash
 python -m ablation.run_ablation_studies \
     --test_data ./data/ablation/test_data.jsonl \
-    --model_name Qwen/Qwen2.5-1.5B-Instruct \
+    --model_name google/flan-t5-base \
     --device cuda \
     --output_dir ./output/ablation_results \
-    --num_gpus 4
-
+    --num_gpus 1
 ```
 
 Or generate data and run in one go:
@@ -44,8 +60,9 @@ Or generate data and run in one go:
 ```bash
 python -m ablation.run_ablation_studies \
     --generate_data \
-    --num_samples 100 \
-    --model_name Qwen/Qwen2.5-1.5B-Instruct
+    --num_samples 500 \
+    --model_name google/flan-t5-base \
+    --output_format json
 ```
 
 ## Baseline 1: Naive Prompting
@@ -65,7 +82,7 @@ Simply provides tool descriptions in the prompt and asks the LLM to generate too
 from ablation.baseline_naive import NaivePromptingBaseline
 
 baseline = NaivePromptingBaseline(
-    model_name="Qwen/Qwen2.5-1.5B-Instruct",
+    model_name="google/flan-t5-base",
     device="cuda",
     include_examples=True
 )
@@ -80,7 +97,7 @@ tool_call = baseline.predict("Find me information about machine learning")
 Adds cross-attention layers that allow the LLM to attend to tool embeddings during generation.
 
 **Key Features**:
-- Learnable tool embeddings
+- Learnable tool embeddings (encoded from example tool calls)
 - Cross-attention layers between LLM hidden states and tool embeddings
 - Architectural awareness of tools
 - Can freeze or fine-tune base LLM
@@ -97,7 +114,7 @@ LLM Hidden States → Cross-Attention → Tool Embeddings
 from ablation.baseline_cross_attention import CrossAttentionBaseline
 
 baseline = CrossAttentionBaseline(
-    model_name="Qwen/Qwen2.5-1.5B-Instruct",
+    model_name="google/flan-t5-base",
     device="cuda",
     num_tools=6,
     cross_attention_layers=1
@@ -106,65 +123,77 @@ baseline = CrossAttentionBaseline(
 tool_call = baseline.predict("Find me information about machine learning")
 ```
 
-## Evaluation
+## Evaluation Metrics
 
 **File**: `evaluate_baselines.py`
 
 Evaluates baselines using the same metrics as the full system:
-- Exact match accuracy
-- Tool selection accuracy
-- Parameter accuracy (by type)
-- Per-tool metrics
 
-**Metrics**:
-- `exact_match_accuracy`: Fraction of perfectly reconstructed tool calls
-- `tool_accuracy`: Fraction of correct tool selections
-- `param_str_accuracy`: Accuracy for string parameters
-- `param_int_accuracy`: Accuracy for integer parameters
-- `per_tool`: Metrics broken down by tool type
-
-## Data Format
-
-Test data should be in JSONL format with the following structure:
-
-```json
-{"query": "Find me information about machine learning", "ground_truth": "search(query='machine learning', max_results=10)", "tool": "search"}
-{"query": "Calculate 2 + 2", "ground_truth": "calculate(expression='2 + 2')", "tool": "calculate"}
-```
+| Metric | Description |
+|--------|-------------|
+| `exact_match_accuracy` | Fraction of perfectly reconstructed tool calls |
+| `tool_accuracy` | Fraction of correct tool selections |
+| `param_str_accuracy` | Accuracy for string parameters |
+| `param_int_accuracy` | Accuracy for integer parameters |
+| `per_tool` | Metrics broken down by tool type |
+| `total_time_seconds` | Total evaluation time |
+| `avg_time_per_prediction_seconds` | Average inference latency |
 
 ## Expected Results
 
 Based on typical performance:
 
-1. **Naive Prompting**: 
-   - Tool accuracy: ~40-60%
-   - Exact match: ~20-40%
-   - Struggles with parameter formatting
+| Approach | Tool Accuracy | Exact Match | Notes |
+|----------|--------------|-------------|-------|
+| Naive Prompting | ~40-60% | ~20-40% | Struggles with parameter formatting |
+| Cross-Attention | ~60-75% | ~40-60% | Better parameter understanding |
+| **Full NTILC** | ~80-95% | ~70-90%+ | Best generalization, single embedding prediction |
 
-2. **Cross-Attention**:
-   - Tool accuracy: ~60-75%
-   - Exact match: ~40-60%
-   - Better parameter understanding
+## Integration with Main Pipeline
 
-3. **Full System** (after training):
-   - Tool accuracy: ~80-95%
-   - Exact match: ~70-90%
-   - Best generalization
+The ablation baselines should be evaluated on the same test data as the full NTILC system for fair comparison:
 
-## Next Steps
+```bash
+# 1. Generate consistent test data
+python -m ablation.generate_ablation_data \
+    --num_samples 1000 \
+    --output ./data/ablation/test_data.jsonl \
+    --output_format json
 
-After running ablation studies:
+# 2. Run baseline evaluations
+python -m ablation.run_ablation_studies \
+    --test_data ./data/ablation/test_data.jsonl \
+    --model_name google/flan-t5-base
 
-1. **Review results** in `./output/ablation_results/baseline_comparison.json`
-2. **Train autoencoder** (Phase 1) - see `training/train_autoencoder.py`
-3. **Integrate with LLM** (Phase 2) - to be implemented
-4. **Compare all three approaches** on same test set
+# 3. After training NTILC, compare on same test set
+python inference.py  # Uses checkpoints/best_model.pt
+```
 
 ## Files
 
-- `tool_schemas.py`: Tool definitions and formatting utilities
-- `baseline_naive.py`: Naive prompting baseline implementation
-- `baseline_cross_attention.py`: Cross-attention baseline implementation
-- `evaluate_baselines.py`: Evaluation framework
-- `generate_ablation_data.py`: Test data generation
-- `run_ablation_studies.py`: Main script to run all experiments
+| File | Description |
+|------|-------------|
+| `tool_schemas.py` | Tool definitions and formatting utilities |
+| `baseline_naive.py` | Naive prompting baseline implementation |
+| `baseline_cross_attention.py` | Cross-attention baseline implementation |
+| `evaluate_baselines.py` | Evaluation framework |
+| `generate_ablation_data.py` | Test data generation (supports JSON/Python formats) |
+| `run_ablation_studies.py` | Main script to run all experiments |
+
+## Wandb Logging
+
+Results are automatically logged to wandb if enabled:
+
+```bash
+python -m ablation.run_ablation_studies \
+    --test_data ./data/ablation/test_data.jsonl \
+    --use_wandb \
+    --wandb_project ntilc \
+    --wandb_entity your_entity
+```
+
+Logged metrics include:
+- Accuracy metrics per baseline
+- Per-tool breakdowns
+- Timing information
+- Comparison tables
