@@ -22,8 +22,8 @@ python inference.py --query "Find me the last 10 orders in California"
 
 NTILC introduces a novel approach to language model tool use by replacing text-based tool invocation with learned continuous embeddings. Instead of generating text like:
 
-```json
-{"tool": "search", "arguments": {"query": "cats", "max_results": 10}}
+```python
+search(query="cats", max_results=10)
 ```
 
 The model predicts a **single 256-dimensional embedding** that encodes the complete tool invocation, which is then decoded back into an executable tool call.
@@ -127,7 +127,7 @@ class AutoencoderConfig:
     label_smoothing: float = 0.1
     
     # Data
-    output_format: str = "json"  # "json" or "python"
+    output_format: str = "python"  # "json" or "python"
     num_train_samples: int = 250000
     
     # Wandb
@@ -161,12 +161,10 @@ Logged items:
 
 ### Data Format
 
-Tool calls are generated in JSON format (default):
+Tool calls are generated in Python format (default):
 
-```json
-{"tool": "search", "arguments": {"query": "machine learning", "max_results": 10}}
-{"tool": "calculate", "arguments": {"expression": "2 + 2"}}
-{"tool": "database_query", "arguments": {"sql": "SELECT * FROM users", "timeout": 30}}
+```python
+search(query="cats", max_results=10)
 ```
 
 ## Ablation Studies
@@ -248,11 +246,11 @@ tqdm>=4.65.0
 If you use this work, please cite:
 
 ```bibtex
-@misc{ntilc2024,
+@misc{ntilc2026,
   title={NTILC: Neural Tool Invocation via Learned Compression},
-  author={Your Name},
-  year={2024},
-  url={https://github.com/yourusername/NTILC}
+  author={Andrew Krikorian},
+  year={2026},
+  url={https://github.com/andykr1k/NTILC}
 }
 ```
 
