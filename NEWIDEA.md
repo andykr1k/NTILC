@@ -133,6 +133,57 @@ Explicit **no-tool / clarification** route:
 
 ---
 
+## System Flow Diagram (with Argument Generation)
+
+```text
++--------------------+
+|     User Query     |
++--------------------+
+         |
+         v
++--------------------+
+|     Encoder        |  <- Frozen 1024-D embedding space
+|     (Intent        |
+|    Embedding)      |
++--------------------+
+         |
+         v
++--------------------+
+|     Projection     |  <- 1024-D → 128-D geometry-friendly space
++--------------------+
+         |
+         v
++--------------------+
+|    Similarity      |
+|    Computation     |  <- Compare query embedding to cluster centroids
++--------------------+
+         |
+         v
++--------------------+
+|   Cluster ID(s)    |  <- Retrieval output (no decoder)
++--------------------+
+         |
+         v
++--------------------+
+|  Software Layer    |  <- Maps cluster ID to candidate tool(s)
+|  - Cluster → Tool  |
+|  - Permissions     |
+|  - Safety checks   |
++--------------------+
+         |
+         v
++--------------------+
+| Argument Handling  |
+| Necessity Detection|  <- Which arguments are required, optional, irrelevant
+|  Value Generation  |  <- Deterministic / autoregressive / diffusion
++--------------------+
+         |
+         v
++--------------------+
+|    Tool Execution  |
++--------------------+
+
+
 ## Training Overview
 
 ### Data Requirements
