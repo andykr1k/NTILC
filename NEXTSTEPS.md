@@ -1,10 +1,8 @@
 # Next Steps - Updated Plan
 
 ## ✅ Completed
-- Finished naive ablation implementation
-- Finished cross attention implementation
-- Fixed data generator with more deterministic results
-- Visualized embeddings of tool calls in notebook
+- **Fixed data generator with more deterministic results**
+- **Visualized embeddings of tool calls in notebook**
 - **Fixed data format consistency (JSON throughout)**
 - **Added contrastive loss for embedding diversity**
 - **Added embedding regularization (L2 + variance)**
@@ -13,11 +11,15 @@
 - **Created LLM integration architecture**
 - **Created NL-to-tool-call data generator**
 - **Created end-to-end inference pipeline**
-- **Updated README with comprehensive documentation**
 - **Updated ablation scripts for JSON format + wandb**
 - **Updated evaluation metrics for JSON format support**
 
 ## 🔄 In Progress
+
+- Finish naive ablation implementation
+- Finished cross attention ablation implementation
+
+## ⏳ Phases
 
 ### Phase 1D: Retrain Autoencoder
 Run the improved autoencoder training:
@@ -51,7 +53,7 @@ python -m training.train_llm_integration --autoencoder_checkpoint checkpoints/be
 This trains the model to:
 - Take natural language query: "Get the last 10 orders from California"
 - Predict tool embedding in the learned space
-- Decode to: `{"tool": "database_query", "arguments": {"sql": "SELECT * FROM orders WHERE state='CA' LIMIT 10", "timeout": 30}}`
+- Decode to: `database_query(sql="SELECT * FROM orders WHERE state='CA' LIMIT 10", timeout=30)`
 
 ### Phase 3: End-to-End Evaluation
 
@@ -69,8 +71,8 @@ system = ToolCallingSystem.from_pretrained(
 )
 
 result = system.predict("Get the last 10 orders from California")
-print(result.tool_name)  # database_query
-print(result.arguments)  # {"sql": "...", "timeout": 30}
+print(result.tool_name)
+print(result.arguments)
 ```
 
 ### Ablation Studies
@@ -83,7 +85,7 @@ python -m ablation.run_ablation_studies \
     --num_samples 500 \
     --model_name google/flan-t5-base \
     --use_wandb \
-    --output_format json
+    --output_format python
 ```
 
 ## 📊 Architecture Overview
@@ -120,50 +122,6 @@ Natural Language ──► LLM Encoder (T5) ──► Tool Prediction Head ─�
        └──────────────────────────────────────────┴──────────────────────┘
                                     End-to-End Pipeline
 ```
-
-## 🔧 Configuration Summary
-
-### Autoencoder (config.py)
-| Parameter | Old | New | Reason |
-|-----------|-----|-----|--------|
-| embedding_dim | 512 | 256 | Reduced for 6 tools |
-| freeze_encoder | True | False | Need to train |
-| freeze_decoder | True | False | Need to train |
-| freeze_encoder_layers | - | 4 | Partial freeze |
-| freeze_decoder_layers | - | 4 | Partial freeze |
-| learning_rate | 1e-5 | 5e-5 | Faster convergence |
-| batch_size | 64 | 32 | Stability |
-| use_contrastive_loss | - | True | Prevent collapse |
-| label_smoothing | - | 0.1 | Generalization |
-| output_format | python | json | Consistency |
-
-### Wandb Configuration
-All experiments log to wandb for full reproducibility:
-- `wandb_project`: "ntilc"
-- `wandb_entity`: "andykr1k"
-
-Logged metrics:
-- Training/validation losses (reconstruction, contrastive, L2, variance)
-- Embedding statistics (norm, variance)
-- Per-tool accuracy breakdown
-- Model checkpoints as artifacts
-- Test examples and predictions
-
-### Key Files Changed
-- `training/data_generator.py` - JSON format + NL generator
-- `training/config.py` - New hyperparameters
-- `training/losses.py` - Contrastive + regularization
-- `training/train_autoencoder.py` - Combined loss
-- `models/encoder.py` - Partial freezing + normalization
-- `models/decoder.py` - Partial freezing
-- `models/autoencoder.py` - Parameter counting
-- `models/llm_integration.py` - Phase 2 model
-- `training/train_llm_integration.py` - Phase 2 training
-- `inference.py` - End-to-end pipeline
-- `evaluation/metrics.py` - JSON format support
-- `ablation/generate_ablation_data.py` - JSON format support
-- `ablation/tool_schemas.py` - JSON format support
-- `ablation/run_ablation_studies.py` - Wandb logging
 
 ## 📈 Success Metrics
 

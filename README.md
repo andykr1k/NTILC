@@ -241,7 +241,7 @@ faker>=18.0.0
 tqdm>=4.65.0
 ```
 
-## Citation
+<!-- ## Citation
 
 If you use this work, please cite:
 
@@ -256,4 +256,4 @@ If you use this work, please cite:
 
 ## License
 
-MIT License
+MIT License -->

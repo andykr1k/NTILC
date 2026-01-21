@@ -1,9 +1,15 @@
-# Month 1
+# Quick Commands
 
 ## Train Autoencoder
 
 ```
-python training/train_autoencoder.py
+python training.train_autoencoder
+```
+
+## Train Autoencoder in Background
+
+```
+nohup python -m training.train_autoencoder > output.log &
 ```
 
 ## Analyze Embeddings
