@@ -269,6 +269,104 @@ def per_tool_metrics(original: List[str], reconstructed: List[str]) -> Dict[str,
     return per_tool
 
 
+def compute_cluster_metrics(
+    embeddings: torch.Tensor,
+    labels: torch.Tensor,
+    tool_calls: List[str] = None
+) -> Dict[str, float]:
+    """
+    Compute cluster-based metrics for NEW ARCHITECTURE.
+    
+    Args:
+        embeddings: (num_samples, embedding_dim) projected embeddings
+        labels: (num_samples,) cluster/tool labels
+        tool_calls: Optional list of tool call strings
+    
+    Returns:
+        Dictionary with cluster metrics
+    """
+    import numpy as np
+    from sklearn.metrics import silhouette_score, adjusted_rand_score
+    
+    embeddings_np = embeddings.numpy() if isinstance(embeddings, torch.Tensor) else embeddings
+    labels_np = labels.numpy() if isinstance(labels, torch.Tensor) else labels
+    
+    metrics = {}
+    
+    # Intra-cluster similarity (average similarity within clusters)
+    intra_cluster_sims = []
+    for cluster_id in np.unique(labels_np):
+        cluster_mask = labels_np == cluster_id
+        if cluster_mask.sum() < 2:
+            continue
+        
+        cluster_embeddings = embeddings_np[cluster_mask]
+        # Compute pairwise cosine similarities
+        from sklearn.metrics.pairwise import cosine_similarity
+        sim_matrix = cosine_similarity(cluster_embeddings)
+        # Get upper triangle (excluding diagonal)
+        triu_indices = np.triu_indices(len(cluster_embeddings), k=1)
+        intra_sims = sim_matrix[triu_indices]
+        intra_cluster_sims.extend(intra_sims.tolist())
+    
+    metrics["intra_cluster_similarity"] = np.mean(intra_cluster_sims) if intra_cluster_sims else 0.0
+    
+    # Inter-cluster similarity (average similarity between clusters)
+    inter_cluster_sims = []
+    unique_labels = np.unique(labels_np)
+    for i, cluster_i in enumerate(unique_labels):
+        for cluster_j in unique_labels[i+1:]:
+            cluster_i_embeddings = embeddings_np[labels_np == cluster_i]
+            cluster_j_embeddings = embeddings_np[labels_np == cluster_j]
+            
+            # Compute average similarity between clusters
+            from sklearn.metrics.pairwise import cosine_similarity
+            cross_sim = cosine_similarity(cluster_i_embeddings, cluster_j_embeddings)
+            inter_cluster_sims.append(cross_sim.mean())
+    
+    metrics["inter_cluster_similarity"] = np.mean(inter_cluster_sims) if inter_cluster_sims else 0.0
+    
+    # Cluster separation (inter - intra)
+    metrics["cluster_separation"] = metrics["inter_cluster_similarity"] - metrics["intra_cluster_similarity"]
+    
+    # Silhouette score (if sklearn available)
+    try:
+        if len(unique_labels) > 1 and len(embeddings_np) > len(unique_labels):
+            silhouette = silhouette_score(embeddings_np, labels_np, metric='cosine')
+            metrics["silhouette_score"] = silhouette
+    except:
+        metrics["silhouette_score"] = 0.0
+    
+    # Cluster accuracy (if tool_calls provided)
+    if tool_calls:
+        from ablation.tool_schemas import TOOL_SCHEMAS
+        tool_names = list(TOOL_SCHEMAS.keys())
+        
+        # Extract tool names from tool calls
+        predicted_tools = []
+        for tc in tool_calls:
+            try:
+                tc_dict = json.loads(tc) if isinstance(tc, str) else tc
+                tool_name = tc_dict.get("tool", "unknown")
+                if tool_name in tool_names:
+                    predicted_tools.append(tool_names.index(tool_name))
+                else:
+                    predicted_tools.append(-1)
+            except:
+                predicted_tools.append(-1)
+        
+        # Compare labels to predicted tools
+        correct = sum(1 for pred, label in zip(predicted_tools, labels_np) if pred == label and pred != -1)
+        total = sum(1 for pred in predicted_tools if pred != -1)
+        metrics["cluster_accuracy"] = correct / total if total > 0 else 0.0
+    
+    # Embedding statistics
+    embedding_stats = embedding_statistics(embeddings)
+    metrics.update(embedding_stats)
+    
+    return metrics
+
+
 def semantic_similarity(original: List[str], reconstructed: List[str]) -> Dict[str, float]:
     """
     Compute semantic similarity metrics (useful for string parameters).

@@ -1,34 +1,44 @@
 """
-NTILC Models Module
+NTILC Models Package
 
-Contains:
-- ToolInvocationEncoder: Encodes tool calls to embeddings
-- ToolInvocationDecoder: Decodes embeddings to tool calls
-- ToolInvocationAutoencoder: Complete encoder-decoder system
-- ToolPredictionLLM: LLM that predicts tool embeddings from natural language
+New Architecture (NEWIDEA):
+- Intent Embedder: Tool intents → 1024-D embeddings
+- Projection Head: 1024-D → 128-D for similarity
+- Cluster Retrieval: Query → Cluster ID (no decoder!)
+- Software Layer: Cluster ID → Tool mapping
+- Argument Inference: Separate argument handling
+
+Legacy (Autoencoder):
+- Autoencoder: Tool call → Embedding → Reconstructed tool call
+- Encoder/Decoder: Components of autoencoder
+- LLM Integration: NL → Embedding → Decoder → Tool call
 """
 
+# New Architecture Components
+from .intent_embedder import ToolIntentEmbedder
+from .projection_head import ProjectionHead
+from .cluster_retrieval import ClusterRetrieval
+from .software_layer import ClusterToToolMapper
+from .argument_inference import ArgumentNecessityClassifier, ArgumentValueGenerator
+
+# Legacy Components (kept for reference/migration)
+from .autoencoder import ToolInvocationAutoencoder
 from .encoder import ToolInvocationEncoder
 from .decoder import ToolInvocationDecoder
-from .autoencoder import ToolInvocationAutoencoder
-from .llm_integration import ToolPredictionLLM, NLToolCallDataset
-from .tool_call_utils import (
-    parse_tool_call,
-    extract_tool,
-    extract_arguments,
-    validate_tool_call,
-    repair_tool_call
-)
+from .llm_integration import ToolPredictionLLM, ToolPredictionHead
 
 __all__ = [
-    "ToolInvocationEncoder",
-    "ToolInvocationDecoder", 
+    # New Architecture
+    "ToolIntentEmbedder",
+    "ProjectionHead",
+    "ClusterRetrieval",
+    "ClusterToToolMapper",
+    "ArgumentNecessityClassifier",
+    "ArgumentValueGenerator",
+    # Legacy
     "ToolInvocationAutoencoder",
+    "ToolInvocationEncoder",
+    "ToolInvocationDecoder",
     "ToolPredictionLLM",
-    "NLToolCallDataset",
-    "parse_tool_call",
-    "extract_tool",
-    "extract_arguments",
-    "validate_tool_call",
-    "repair_tool_call"
+    "ToolPredictionHead",
 ]

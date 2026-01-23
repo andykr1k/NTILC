@@ -1,6 +1,6 @@
-# NTILC: Neural Tool Invocation via Learned Compression
+# NTILC: Neural Tool Invocation via Learned Compression (NEW ARCHITECTURE)
 
-**Train an LLM to invoke function calls via learned continuous embeddings instead of text generation.**
+**Train a system to invoke function calls via cluster-based retrieval instead of text generation.**
 
 ## Quick Start
 
@@ -8,85 +8,94 @@
 # 1. Install dependencies
 pip install -r requirements.txt
 
-# 2. Train the autoencoder (Phase 1)
-python -m training.train_autoencoder
+# 2. Train intent embedder (Phase 1)
+python -m training.train_intent_embedding
 
-# 3. Train LLM integration (Phase 2 - after autoencoder converges)
-python -m training.train_llm_integration --autoencoder_checkpoint checkpoints/best_model.pt
+# 3. Train cluster retrieval (Phase 2 - after intent embedder converges)
+python -m training.train_cluster_retrieval
 
 # 4. Run inference
-python inference.py --query "Find me the last 10 orders in California"
+python inference.py
 ```
 
 ## Overview
 
-NTILC introduces a novel approach to language model tool use by replacing text-based tool invocation with learned continuous embeddings. Instead of generating text like:
+NTILC introduces a novel approach to language model tool use by replacing text-based tool invocation with **cluster-based retrieval**. Instead of generating text like:
 
 ```python
 search(query="cats", max_results=10)
 ```
 
-The model predicts a **single 256-dimensional embedding** that encodes the complete tool invocation, which is then decoded back into an executable tool call.
+The system:
+1. Embeds tool intents into a 1024-D space
+2. Projects to 128-D for similarity computation
+3. Retrieves cluster IDs based on query similarity
+4. Maps cluster IDs to tools via a software layer
+5. Infers arguments separately
 
 ### Why This Approach?
 
-| Aspect | Text-Based | NTILC |
-|--------|-----------|-------|
-| Generation | O(n) tokens | O(1) embedding |
-| Errors | Parsing failures | Learned recovery |
-| Similarity | "cats" ≠ "dogs" in tokens | Similar embeddings |
-| Gradients | Sparse through tokens | Dense through embeddings |
+| Aspect | Text-Based | Old NTILC | New NTILC |
+|--------|-----------|-----------|-----------|
+| Generation | O(n) tokens | O(1) embedding | O(1) cluster lookup |
+| Speed | Slow (autoregressive) | Medium (decoder) | Fast (similarity) |
+| Errors | Parsing failures | Decoder errors | Cluster mismatch |
+| Interpretability | Low | Medium | High (cluster IDs) |
+| Extensibility | Retrain all | Retrain decoder | Add single embedding |
 
-## Architecture
+## Architecture (NEW)
 
-### Phase 1: Tool Invocation Autoencoder
-
-```
-Tool Call String → [Encoder] → Embedding (R^256) → [Decoder] → Reconstructed Tool Call
-```
-
-- **Encoder**: T5-based transformer with attention pooling → projection to embedding dim
-- **Decoder**: T5-based transformer that autoregressively generates the tool call from embedding
-- **Loss**: Cross-entropy + contrastive loss + embedding regularization
-
-### Phase 2: LLM Integration
+### Phase 1: Intent Embedding
 
 ```
-Natural Language Query → [LLM] → Predicted Embedding → [Frozen Decoder] → Tool Call
+Tool Intent → [Intent Embedder] → 1024-D Embedding → [Projection Head] → 128-D
 ```
 
-- **LLM**: Takes query and predicts tool embedding via projection head
-- **Training**: MSE loss between predicted embedding and encoder output for ground truth
-- **Inference**: LLM predicts embedding → Decoder generates tool call
+- **Intent Embedder**: T5-based transformer that embeds canonicalized tool intents
+  - Includes: tool name, description, schema, examples, paraphrases
+- **Projection Head**: Projects 1024-D → 128-D for similarity computation
+- **Loss**: Circle Loss for metric learning + contrastive loss + regularization
+
+### Phase 2: Cluster Retrieval
+
+```
+Natural Language Query → [Query Encoder] → 128-D Embedding → [Cluster Retrieval] → Cluster ID
+Cluster ID → [Software Layer] → Tool
+Query → [Argument Inference] → Arguments
+```
+
+- **Query Encoder**: Encodes NL queries to 128-D embeddings
+- **Cluster Retrieval**: Computes similarity to cluster centroids, returns cluster ID
+- **Software Layer**: Maps cluster IDs to tools (decouples model from execution)
+- **Argument Inference**: Handles arguments separately from tool selection
 
 ## Project Structure
 
 ```
 NTILC/
 ├── models/
-│   ├── autoencoder.py      # Main autoencoder module
-│   ├── encoder.py          # Tool call → embedding encoder
-│   ├── decoder.py          # Embedding → tool call decoder
-│   ├── llm_integration.py  # LLM with embedding prediction
-│   └── tool_call_utils.py  # Parsing/validation utilities
+│   ├── intent_embedder.py      # Tool intent → 1024-D embeddings (NEW)
+│   ├── projection_head.py      # 1024-D → 128-D projection (NEW)
+│   ├── cluster_retrieval.py     # Cluster ID retrieval (NEW)
+│   ├── software_layer.py        # Cluster ID → Tool mapping (NEW)
+│   ├── argument_inference.py    # Argument generation (NEW)
+│   ├── autoencoder.py           # Legacy autoencoder
+│   ├── encoder.py               # Legacy encoder
+│   ├── decoder.py               # Legacy decoder
+│   └── tool_call_utils.py      # Parsing/validation utilities
 ├── training/
-│   ├── config.py           # All configuration (hyperparameters)
-│   ├── data_generator.py   # Synthetic tool call generation
-│   ├── losses.py           # Loss functions (contrastive, reconstruction)
-│   ├── train_autoencoder.py      # Phase 1 training script
-│   └── train_llm_integration.py  # Phase 2 training script
+│   ├── config.py                # Configuration (updated for new architecture)
+│   ├── data_generator.py        # Synthetic data generation
+│   ├── losses.py                # Loss functions (Circle Loss added)
+│   ├── train_intent_embedding.py    # Phase 1 training (NEW)
+│   ├── train_cluster_retrieval.py   # Phase 2 training (NEW)
+│   ├── train_autoencoder.py        # Legacy training
+│   └── train_llm_integration.py     # Legacy training
 ├── evaluation/
-│   └── metrics.py          # Evaluation metrics
-├── ablation/
-│   ├── baseline_naive.py         # Naive prompting baseline
-│   ├── baseline_cross_attention.py  # Cross-attention baseline
-│   ├── generate_ablation_data.py # Test data generation
-│   ├── run_ablation_studies.py   # Main ablation script
-│   └── README.md
-├── data/                   # Generated training data
-├── checkpoints/            # Saved model checkpoints
-├── output/                 # Evaluation results
-└── requirements.txt
+│   └── metrics.py               # Evaluation metrics (cluster metrics added)
+├── inference.py                  # Inference pipeline (updated for clusters)
+├── NEWIDEA.md                   # Original design document
+└── REFACTORING_SUMMARY.md       # Refactoring notes
 ```
 
 ## Supported Tools
@@ -110,30 +119,49 @@ All hyperparameters are in `training/config.py`:
 
 ```python
 @dataclass
-class AutoencoderConfig:
+class IntentEmbeddingConfig:
     # Model
-    embedding_dim: int = 256
+    intent_embedding_dim: int = 1024  # High-dimensional intent space
+    projection_dim: int = 128          # Projected space for similarity
     encoder_model: str = "google/flan-t5-base"
-    decoder_model: str = "google/flan-t5-base"
     
     # Training
     batch_size: int = 32
     learning_rate: float = 5e-5
-    num_epochs: int = 50
+    num_epochs: int = 30
     
     # Loss
-    use_contrastive_loss: bool = True
-    contrastive_loss_weight: float = 0.3
-    label_smoothing: float = 0.1
-    
-    # Data
-    output_format: str = "python"  # "json" or "python"
-    num_train_samples: int = 250000
+    use_circle_loss: bool = True
+    circle_loss_weight: float = 1.0
+    circle_loss_margin: float = 0.25
+    circle_loss_gamma: float = 256.0
     
     # Wandb
     use_wandb: bool = True
     wandb_project: str = "ntilc"
 ```
+
+### Training Phases
+
+**Phase 1: Intent Embedding**
+```bash
+python -m training.train_intent_embedding
+```
+
+Trains:
+- Intent embedder (1024-D embeddings)
+- Projection head (128-D for similarity)
+- Uses Circle Loss for metric learning
+
+**Phase 2: Cluster Retrieval**
+```bash
+python -m training.train_cluster_retrieval
+```
+
+Trains:
+- Query encoder (NL → 128-D)
+- Uses frozen intent embedder and projection head
+- Optimizes for cluster retrieval
 
 ### Wandb Logging
 
@@ -141,95 +169,64 @@ All experiments are fully reproducible via wandb:
 
 ```bash
 # Training with wandb
-python -m training.train_autoencoder
-
-# Ablation studies with wandb
-python -m ablation.run_ablation_studies \
-    --use_wandb \
-    --wandb_project ntilc \
-    --generate_data \
-    --num_samples 500
+python -m training.train_intent_embedding
+python -m training.train_cluster_retrieval
 ```
 
 Logged items:
 - All hyperparameters and config
 - Training/validation losses per step
-- Embedding statistics (norm, variance)
-- Per-tool accuracy metrics
+- Cluster metrics (intra/inter-cluster similarity)
+- Embedding statistics
 - Model checkpoints as artifacts
-- Test examples and predictions
 
-### Data Format
-
-Tool calls are generated in Python format (default):
+## Inference
 
 ```python
-search(query="cats", max_results=10)
+from inference import ClusterBasedToolSystem
+
+# Load system
+system = ClusterBasedToolSystem.from_pretrained(
+    intent_embedder_path="checkpoints/best_model.pt",
+    query_encoder_path="checkpoints/cluster_retrieval/best_model.pt"
+)
+
+# Predict tool call
+result = system.predict("Get the last 10 orders from California")
+print(result.tool_name)      # "database_query"
+print(result.arguments)      # {"sql": "...", "timeout": 30}
+print(result.cluster_id)     # 2
+print(result.confidence)      # 0.95
 ```
-
-## Ablation Studies
-
-Compare NTILC against baselines:
-
-```bash
-# Generate test data and run comparisons
-python -m ablation.run_ablation_studies \
-    --generate_data \
-    --num_samples 500 \
-    --model_name google/flan-t5-base \
-    --use_wandb
-
-# Results saved to output/ablation_results/
-```
-
-### Expected Performance
-
-| Approach | Tool Accuracy | Exact Match |
-|----------|--------------|-------------|
-| Naive Prompting | ~40-60% | ~20-40% |
-| Cross-Attention | ~60-75% | ~40-60% |
-| **NTILC** | ~80-95% | ~70-90%+ |
 
 ## Evaluation Metrics
 
 | Metric | Description |
 |--------|-------------|
-| `exact_match_accuracy` | Perfectly reconstructed tool calls |
-| `tool_accuracy` | Correct tool selection |
-| `param_str_accuracy` | String parameter accuracy |
-| `param_int_accuracy` | Integer parameter accuracy |
+| `cluster_accuracy` | Correct cluster/tool selection |
+| `intra_cluster_similarity` | Average similarity within clusters |
+| `inter_cluster_similarity` | Average similarity between clusters |
+| `cluster_separation` | Inter - intra cluster similarity |
+| `silhouette_score` | Cluster quality metric |
 | `embedding_mean_norm` | Average embedding L2 norm |
 | `embedding_mean_variance` | Embedding variance (diversity) |
 
-## Theoretical Foundations
+## Key Benefits of New Architecture
 
-### Information Bottleneck
+1. **No Decoder**: Faster inference (cluster lookup vs. autoregressive generation)
+2. **Interpretable**: Cluster IDs are human-readable
+3. **Extensible**: New tools can be added by optimizing a single embedding
+4. **Separated Concerns**: Tool selection vs. argument generation
+5. **Geometry-Optimized**: Metric learning (Circle Loss) for similarity
 
-A tool invocation contains ~60-210 bits of information. A 256-dimensional float32 embedding has 8,192 bits capacity — plenty for lossless compression.
+## Migration from Old Architecture
 
-### Manifold Hypothesis
+The old autoencoder-based architecture is still available in:
+- `models/autoencoder.py`
+- `training/train_autoencoder.py`
+- `training/train_llm_integration.py`
 
-Valid tool invocations lie on a low-dimensional manifold in the space of all strings. The autoencoder learns this manifold structure.
-
-### Continuous Optimization
-
-Unlike discrete token prediction, continuous embeddings enable smooth gradients throughout the entire pipeline.
-
-## Research Questions
-
-1. **Optimal Embedding Dimension**: How does dim ∈ {128, 256, 512} affect quality?
-2. **Pooling Strategy**: Mean vs CLS vs attention pooling?
-3. **Embedding Space Structure**: Do similar tools cluster? Does arithmetic work?
-4. **Generalization**: Zero-shot to unseen parameter values?
-5. **Multi-Tool Composition**: Can we chain embeddings for workflows?
-
-## Success Metrics
-
-| Level | Reconstruction | End-to-End | Speedup |
-|-------|---------------|------------|---------|
-| Minimum | 90%+ | 80%+ | 5x+ |
-| Strong | 95%+ | 90%+ | 10x+ |
-| Breakthrough | 98%+ | 95%+ | 20x+ |
+See `REFACTORING_SUMMARY.md` for details on the migration.
 
 ## Requirements
 
@@ -239,21 +236,11 @@ transformers>=4.30.0
 wandb>=0.15.0
 faker>=18.0.0
 tqdm>=4.65.0
+scikit-learn>=1.0.0
 ```
 
-<!-- ## Citation
+## References
 
-If you use this work, please cite:
-
-```bibtex
-@misc{ntilc2026,
-  title={NTILC: Neural Tool Invocation via Learned Compression},
-  author={Andrew Krikorian},
-  year={2026},
-  url={https://github.com/andykr1k/NTILC}
-}
-```
-
-## License
-
-MIT License -->
+- `NEWIDEA.md` - Original design document
+- `REFACTORING_SUMMARY.md` - Refactoring notes
+- `REFACTORING_NOTES.md` - Detailed refactoring guide

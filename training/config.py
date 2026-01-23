@@ -7,24 +7,24 @@ from typing import Optional, List
 
 
 @dataclass
-class AutoencoderConfig:
-    """Configuration for autoencoder training."""
+class IntentEmbeddingConfig:
+    """Configuration for intent embedding training (NEW ARCHITECTURE)."""
 
     # Model architecture
-    embedding_dim: int = 256
+    intent_embedding_dim: int = 1024  # High-dimensional intent space
+    projection_dim: int = 128  # Projected space for similarity
     encoder_model: str = "google/flan-t5-base"
-    decoder_model: str = "google/flan-t5-base"
     pooling_strategy: str = "attention"
-    max_length: int = 256
-    dropout: float = 0.10
+    max_length: int = 512  # Longer for intent descriptions
+    dropout: float = 0.15
 
-    # CRITICAL: Don't freeze - need to train for good embeddings
+    # Freezing strategy
     freeze_encoder: bool = False
-    freeze_decoder: bool = False
-    
-    # Partial freezing - freeze early layers, train later ones
     freeze_encoder_layers: int = 4
-    freeze_decoder_layers: int = 2
+    
+    # Cluster configuration
+    num_clusters: int = None  # None = dynamic clusters
+    cluster_update_interval: int = 100  # Steps between cluster updates
 
     # Training hyperparameters
     batch_size: int = 32
@@ -49,14 +49,15 @@ class AutoencoderConfig:
     output_format: str = "python"
     regenerate_data: bool = True
 
-    # Loss configuration
-    use_validity_loss: bool = False
-    validity_loss_weight: float = 0.1
+    # Loss configuration (NEW: Circle Loss)
+    use_circle_loss: bool = True
+    circle_loss_weight: float = 1.0
+    circle_loss_margin: float = 0.25
+    circle_loss_gamma: float = 256.0
     
-    # Contrastive loss for embedding diversity
-    use_contrastive_loss: bool = True
-    contrastive_loss_weight: float = 0.03
-    contrastive_margin: float = 0.5
+    # Contrastive loss (can be used alongside Circle Loss)
+    use_contrastive_loss: bool = False
+    contrastive_loss_weight: float = 0.1
     contrastive_temperature: float = 0.07
     
     # Embedding regularization

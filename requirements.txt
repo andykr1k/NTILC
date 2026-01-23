@@ -13,3 +13,5 @@ scipy
 umap-learn
 plotly
 tqdm
+beautifulsoup4
+playwright
