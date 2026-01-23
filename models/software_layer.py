@@ -139,7 +139,7 @@ class ClusterToToolMapper:
         tool_name: str,
         arguments: Dict[str, Any],
         user_permissions: Optional[Set[str]] = None
-    ) -> Tuple[bool, List[str]]:
+    ) -> tuple[bool, List[str]]:
         """
         Validate tool execution with safety rules and permissions.
         

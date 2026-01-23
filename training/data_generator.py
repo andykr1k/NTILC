@@ -36,8 +36,8 @@ class ToolInvocationGenerator:
         self.config = config or DataGeneratorConfig()
         self.output_format = output_format
         self.faker = Faker()
-        Faker.seed(42)  # For reproducibility
-        random.seed(42)
+        # Faker.seed(42)  # For reproducibility
+        # random.seed(42)
 
     def _format_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """

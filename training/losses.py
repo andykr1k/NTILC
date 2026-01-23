@@ -149,6 +149,193 @@ class ContrastiveLoss(nn.Module):
         except ValueError:
             return -1
 
+class CircleLoss(nn.Module):
+    """
+    Circle Loss for metric learning and deep feature learning.
+    
+    Paper: "Circle Loss: A Unified Perspective of Pair Similarity Optimization"
+    https://arxiv.org/abs/2002.10857
+    
+    Circle Loss unifies pair-based and class-based similarity optimization,
+    providing flexible optimization boundaries for better feature learning.
+    """
+    
+    def __init__(
+        self,
+        margin: float = 0.25,
+        gamma: float = 256,
+        similarity_type: str = "cosine"
+    ):
+        """
+        Args:
+            margin: Margin for similarity optimization (m in paper)
+            gamma: Scale factor for logits (gamma in paper)
+            similarity_type: Type of similarity measure ('cosine' or 'euclidean')
+        """
+        super().__init__()
+        self.margin = margin
+        self.gamma = gamma
+        self.similarity_type = similarity_type
+        
+        # Optimal similarity thresholds
+        self.O_p = 1 + margin  # Optimal positive similarity
+        self.O_n = -margin      # Optimal negative similarity
+        
+        # Delta values for weighting
+        self.Delta_p = 1 - margin
+        self.Delta_n = margin
+    
+    def forward(
+        self,
+        embeddings: torch.Tensor,
+        labels: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Compute Circle Loss.
+        
+        Args:
+            embeddings: (batch_size, embedding_dim) embeddings (will be normalized)
+            labels: (batch_size,) class labels for each embedding
+            
+        Returns:
+            Scalar loss tensor
+        """
+        batch_size = embeddings.shape[0]
+        device = embeddings.device
+        
+        if batch_size < 2:
+            return torch.tensor(0.0, device=device, requires_grad=True)
+        
+        # Normalize embeddings for cosine similarity
+        embeddings_norm = F.normalize(embeddings, p=2, dim=1)
+        
+        # Compute similarity matrix: (B, B)
+        similarity_matrix = torch.matmul(embeddings_norm, embeddings_norm.T)
+        
+        # Create masks for positive and negative pairs
+        labels = labels.view(-1, 1)
+        positive_mask = (labels == labels.T).float()  # Same class
+        negative_mask = (labels != labels.T).float()  # Different class
+        
+        # Remove diagonal (self-similarity)
+        diagonal_mask = torch.eye(batch_size, dtype=torch.float32, device=device)
+        positive_mask = positive_mask * (1 - diagonal_mask)
+        negative_mask = negative_mask * (1 - diagonal_mask)
+        
+        # Check if we have valid pairs
+        num_positives = positive_mask.sum()
+        num_negatives = negative_mask.sum()
+        
+        if num_positives == 0 or num_negatives == 0:
+            # Fallback: use simple contrastive loss
+            print(f"Warning: No valid pairs (pos={num_positives}, neg={num_negatives})")
+            return torch.tensor(0.0, device=device, requires_grad=True)
+        
+        # Get positive and negative similarities
+        sp = similarity_matrix * positive_mask  # Positive pairs
+        sn = similarity_matrix * negative_mask  # Negative pairs
+        
+        # Compute alpha (weighting factors) - detach to stop gradients
+        alpha_p = torch.clamp(self.O_p - sp.detach(), min=0.0)
+        alpha_n = torch.clamp(sn.detach() - self.O_n, min=0.0)
+        
+        # Compute weighted logits
+        logit_p = -self.gamma * alpha_p * (sp - self.Delta_p)
+        logit_n = self.gamma * alpha_n * (sn - self.Delta_n)
+        
+        # Apply masks
+        logit_p = logit_p * positive_mask
+        logit_n = logit_n * negative_mask
+        
+        # Gather all positive and negative logits across the batch
+        pos_logits = logit_p[positive_mask > 0]
+        neg_logits = logit_n[negative_mask > 0]
+        
+        # Circle loss formulation: log(1 + sum_p(exp(logit_p)) * sum_n(exp(logit_n)))
+        # Use logsumexp for numerical stability
+        if len(pos_logits) > 0 and len(neg_logits) > 0:
+            # Method 1: Global loss across all pairs
+            pos_term = torch.logsumexp(pos_logits, dim=0)
+            neg_term = torch.logsumexp(neg_logits, dim=0)
+            loss = F.softplus(pos_term + neg_term)
+        else:
+            loss = torch.tensor(0.0, device=device, requires_grad=True)
+        
+        return loss
+
+
+class CircleLossV2(nn.Module):
+    """
+    Alternative Circle Loss implementation using per-sample computation.
+    More similar to triplet loss formulation.
+    """
+    
+    def __init__(
+        self,
+        margin: float = 0.25,
+        gamma: float = 256,
+        similarity_type: str = "cosine"
+    ):
+        super().__init__()
+        self.margin = margin
+        self.gamma = gamma
+        self.similarity_type = similarity_type
+    
+    def forward(
+        self,
+        embeddings: torch.Tensor,
+        labels: torch.Tensor
+    ) -> torch.Tensor:
+        """Compute Circle Loss per sample and average."""
+        batch_size = embeddings.shape[0]
+        device = embeddings.device
+        
+        if batch_size < 2:
+            return torch.tensor(0.0, device=device, requires_grad=True)
+        
+        # Normalize
+        embeddings_norm = F.normalize(embeddings, p=2, dim=1)
+        similarity_matrix = torch.matmul(embeddings_norm, embeddings_norm.T)
+        
+        # Create masks
+        labels = labels.view(-1, 1)
+        positive_mask = (labels == labels.T).float()
+        negative_mask = (labels != labels.T).float()
+        diagonal_mask = torch.eye(batch_size, dtype=torch.float32, device=device)
+        positive_mask = positive_mask * (1 - diagonal_mask)
+        negative_mask = negative_mask * (1 - diagonal_mask)
+        
+        # Per-sample loss
+        losses = []
+        for i in range(batch_size):
+            pos_mask_i = positive_mask[i] > 0
+            neg_mask_i = negative_mask[i] > 0
+            
+            if pos_mask_i.sum() == 0 or neg_mask_i.sum() == 0:
+                continue
+            
+            # Get similarities for this sample
+            pos_sim = similarity_matrix[i][pos_mask_i]
+            neg_sim = similarity_matrix[i][neg_mask_i]
+            
+            # Compute alpha weights
+            alpha_p = torch.clamp(1 + self.margin - pos_sim.detach(), min=0.0)
+            alpha_n = torch.clamp(neg_sim.detach() + self.margin, min=0.0)
+            
+            # Weighted logits
+            logit_p = -self.gamma * alpha_p * (pos_sim - (1 - self.margin))
+            logit_n = self.gamma * alpha_n * (neg_sim - self.margin)
+            
+            # Circle loss for this sample
+            pos_term = torch.logsumexp(logit_p, dim=0)
+            neg_term = torch.logsumexp(logit_n, dim=0)
+            sample_loss = F.softplus(pos_term + neg_term)
+            losses.append(sample_loss)
+        
+        if len(losses) > 0:
+            return torch.stack(losses).mean()
+        else:
+            return torch.tensor(0.0, device=device, requires_grad=True)
 
 class EmbeddingRegularizationLoss(nn.Module):
     """

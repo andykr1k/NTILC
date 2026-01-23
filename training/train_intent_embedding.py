@@ -64,6 +64,23 @@ class IntentDataset(Dataset):
         }
 
 
+def collate_intent_batch(batch):
+    """
+    Custom collate function for IntentDataset.
+    
+    Since tool_calls are dictionaries with varying structures,
+    we cannot use PyTorch's default collate which tries to
+    recursively batch nested dictionaries.
+    
+    Args:
+        batch: List of dicts from IntentDataset.__getitem__
+        
+    Returns:
+        List of dicts (preserves original structure)
+    """
+    return batch
+
+
 def train_epoch(
     intent_embedder: ToolIntentEmbedder,
     projection_head: ProjectionHead,
@@ -307,21 +324,27 @@ def main():
     val_queries = [item["query"] for item in train_data[:config.num_val_samples]]
     val_dataset = IntentDataset(val_tool_calls, queries=val_queries)
     
+    # Create DataLoaders with custom collate function
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.batch_size,
         shuffle=True,
-        num_workers=2
+        num_workers=2,
+        collate_fn=collate_intent_batch  # FIXED: Add custom collate
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=config.batch_size,
         shuffle=False,
-        num_workers=2
+        num_workers=2,
+        collate_fn=collate_intent_batch  # FIXED: Add custom collate
     )
     
     # Initialize models
     print("Initializing models...")
+    # Determine dtype
+    use_dtype = torch.bfloat16 if device.type == "cuda" else torch.float32
+    
     intent_embedder = ToolIntentEmbedder(
         model_name=config.encoder_model,
         embedding_dim=config.intent_embedding_dim,
@@ -337,7 +360,7 @@ def main():
         input_dim=config.intent_embedding_dim,
         output_dim=config.projection_dim,
         dropout=config.dropout
-    ).to(device)
+    ).to(device).to(use_dtype)  # Convert to same dtype as embedder
     
     # Loss functions
     circle_loss_fn = CircleLoss(
