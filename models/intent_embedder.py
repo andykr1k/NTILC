@@ -1,7 +1,7 @@
 """
 Intent Embedder for NTILC: Maps tool intents to 1024-D embedding space.
 
-This replaces the autoencoder encoder. It embeds canonicalized intent objects
+Embeds canonicalized intent objects
 including tool name, description, argument schema, example calls, and paraphrases.
 """
 
@@ -11,7 +11,7 @@ from transformers import AutoTokenizer, T5EncoderModel, AutoConfig
 from typing import List, Dict, Any, Optional
 import json
 
-from ablation.tool_schemas import TOOL_SCHEMAS
+from models.tool_schemas import TOOL_SCHEMAS
 
 
 class ToolIntentEmbedder(nn.Module):

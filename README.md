@@ -55,6 +55,8 @@ The system:
 6. **Preserves Debuggability**: Clear mapping from cluster ID to tool
 7. **Matches Real-World Usage**: Geometry aligns with actual tool usage patterns
 
+**Tool Call Format:** NTILC uses Python function-call strings (e.g., `search(query='...', max_results=10)`) rather than JSON.
+
 ---
 
 ## Quick Start
@@ -88,6 +90,7 @@ system = ClusterBasedToolSystem.from_pretrained(
 result = system.predict("Get the last 10 orders from California")
 print(f"Tool: {result.tool_name}")           # "database_query"
 print(f"Arguments: {result.arguments}")      # {"sql": "...", "timeout": 30}
+print(f"Tool Call: {result.tool_call}")      # "database_query(sql='...', timeout=30)"
 print(f"Cluster ID: {result.cluster_id}")    # 2
 print(f"Confidence: {result.confidence}")    # 0.95
 ```
@@ -235,9 +238,11 @@ NTILC/
 │   ├── intent_embedder.py      # Tool intent → 1024-D embeddings
 │   ├── projection_head.py      # 1024-D → 128-D projection
 │   ├── cluster_retrieval.py    # Cluster ID retrieval
+│   ├── query_encoder.py        # NL query → 128-D embedding
 │   ├── software_layer.py       # Cluster ID → Tool mapping
 │   ├── argument_inference.py   # Argument generation
-│   └── tool_call_utils.py      # Parsing/validation utilities
+│   ├── tool_call_utils.py      # Parsing/validation utilities
+│   └── tool_schemas.py         # Tool definitions and schemas
 ├── training/
 │   ├── config.py               # Configuration
 │   ├── data_generator.py       # Synthetic data generation
@@ -245,7 +250,8 @@ NTILC/
 │   ├── train_intent_embedding.py    # Phase 1 training
 │   └── train_cluster_retrieval.py   # Phase 2 training
 ├── evaluation/
-│   └── metrics.py              # Evaluation metrics
+│   ├── metrics.py              # Evaluation metrics
+│   └── visualizations.py       # Embedding visualizations
 ├── inference.py                # Inference pipeline
 ├── README.md                   # This file
 └── requirements.txt            # Dependencies

@@ -1,0 +1,1 @@
+nohup python -m training.train_intent_embedder > logs/IE/train.log 2>&1

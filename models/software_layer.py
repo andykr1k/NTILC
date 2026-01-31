@@ -10,7 +10,7 @@ import json
 from typing import Dict, List, Optional, Any, Set
 from collections import defaultdict
 
-from ablation.tool_schemas import TOOL_SCHEMAS
+from models.tool_schemas import TOOL_SCHEMAS
 
 
 class ClusterToToolMapper:
@@ -40,12 +40,14 @@ class ClusterToToolMapper:
         self.cluster_to_tools = cluster_to_tools or {}
         self.tool_versions = tool_versions or {}
         self.safety_rules = safety_rules or {}
+        self._cluster_cache: Dict[int, Dict[str, Any]] = {}
         
         # Build reverse mapping: tool -> clusters
         self.tool_to_clusters = defaultdict(list)
         for cluster_id, tools in self.cluster_to_tools.items():
             for tool in tools:
                 self.tool_to_clusters[tool].append(cluster_id)
+        self.build_cache()
     
     def add_cluster_mapping(self, cluster_id: int, tools: List[str]):
         """Add or update cluster to tool mapping."""
@@ -55,6 +57,48 @@ class ClusterToToolMapper:
         for tool in tools:
             if cluster_id not in self.tool_to_clusters[tool]:
                 self.tool_to_clusters[tool].append(cluster_id)
+        self._update_cache_for_cluster(cluster_id)
+
+    def _update_cache_for_cluster(self, cluster_id: int):
+        """Update cached info for a single cluster."""
+        tools = self.cluster_to_tools.get(cluster_id, [])
+        if not tools:
+            self._cluster_cache.pop(cluster_id, None)
+            return
+
+        tool_name = tools[0]
+        tool_schema = TOOL_SCHEMAS.get(tool_name)
+        if not tool_schema:
+            self._cluster_cache.pop(cluster_id, None)
+            return
+
+        required_args = [
+            name for name, info in tool_schema["parameters"].items()
+            if info.get("required", False)
+        ]
+        optional_args = [
+            name for name, info in tool_schema["parameters"].items()
+            if not info.get("required", False)
+        ]
+        defaults = {
+            name: info["default"]
+            for name, info in tool_schema["parameters"].items()
+            if "default" in info
+        }
+
+        self._cluster_cache[cluster_id] = {
+            "tool": tool_name,
+            "schema": tool_schema,
+            "required_args": required_args,
+            "optional_args": optional_args,
+            "defaults": defaults,
+        }
+
+    def build_cache(self):
+        """Precompute cluster -> tool metadata for fast resolution."""
+        self._cluster_cache = {}
+        for cluster_id in self.cluster_to_tools.keys():
+            self._update_cache_for_cluster(cluster_id)
     
     def get_tools_for_cluster(self, cluster_id: int) -> List[str]:
         """Get tools associated with a cluster ID."""
@@ -107,6 +151,35 @@ class ClusterToToolMapper:
             "safety_rules": self.safety_rules.get(tool_name, []),
             "confidence": similarity_score,
             "cluster_id": cluster_id
+        }
+
+    def resolve_cluster_fast(
+        self,
+        cluster_id: int,
+        similarity_score: float = 1.0,
+        threshold: float = 0.5
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Resolve cluster using cached metadata for speed.
+        """
+        if similarity_score < threshold:
+            return None
+
+        cached = self._cluster_cache.get(cluster_id)
+        if not cached:
+            return None
+
+        tool_name = cached["tool"]
+        return {
+            "tool": tool_name,
+            "version": self.tool_versions.get(tool_name, "1.0.0"),
+            "schema": cached["schema"],
+            "safety_rules": self.safety_rules.get(tool_name, []),
+            "confidence": similarity_score,
+            "cluster_id": cluster_id,
+            "required_args": cached["required_args"],
+            "optional_args": cached["optional_args"],
+            "defaults": cached["defaults"],
         }
     
     def resolve_multiple_clusters(
@@ -217,6 +290,7 @@ class ClusterToToolMapper:
         # Simple 1:1 mapping: cluster_id = tool_index
         for idx, tool_name in enumerate(tools):
             self.add_cluster_mapping(idx, [tool_name])
+        self.build_cache()
     
     def save(self, filepath: str):
         """Save mappings to file."""
@@ -242,3 +316,4 @@ class ClusterToToolMapper:
         for cluster_id, tools in self.cluster_to_tools.items():
             for tool in tools:
                 self.tool_to_clusters[tool].append(cluster_id)
+        self.build_cache()

@@ -1,6 +1,7 @@
 """
-Evaluation metrics for NTILC autoencoder.
+Evaluation metrics for NTILC cluster-based training.
 Supports both JSON and Python format tool calls.
+FIXED: BFloat16 tensor conversion for sklearn compatibility.
 """
 
 import torch
@@ -286,10 +287,18 @@ def compute_cluster_metrics(
         Dictionary with cluster metrics
     """
     import numpy as np
-    from sklearn.metrics import silhouette_score, adjusted_rand_score
+    from sklearn.metrics import silhouette_score
     
-    embeddings_np = embeddings.numpy() if isinstance(embeddings, torch.Tensor) else embeddings
-    labels_np = labels.numpy() if isinstance(labels, torch.Tensor) else labels
+    # FIXED: Convert bfloat16 to float32 before numpy conversion
+    if isinstance(embeddings, torch.Tensor):
+        embeddings_np = embeddings.float().cpu().numpy()
+    else:
+        embeddings_np = embeddings
+    
+    if isinstance(labels, torch.Tensor):
+        labels_np = labels.long().cpu().numpy()
+    else:
+        labels_np = labels
     
     metrics = {}
     
@@ -326,8 +335,8 @@ def compute_cluster_metrics(
     
     metrics["inter_cluster_similarity"] = np.mean(inter_cluster_sims) if inter_cluster_sims else 0.0
     
-    # Cluster separation (inter - intra)
-    metrics["cluster_separation"] = metrics["inter_cluster_similarity"] - metrics["intra_cluster_similarity"]
+    # Cluster separation (intra - inter, higher is better)
+    metrics["cluster_separation"] = metrics["intra_cluster_similarity"] - metrics["inter_cluster_similarity"]
     
     # Silhouette score (if sklearn available)
     try:
@@ -339,29 +348,33 @@ def compute_cluster_metrics(
     
     # Cluster accuracy (if tool_calls provided)
     if tool_calls:
-        from ablation.tool_schemas import TOOL_SCHEMAS
-        tool_names = list(TOOL_SCHEMAS.keys())
-        
-        # Extract tool names from tool calls
-        predicted_tools = []
-        for tc in tool_calls:
-            try:
-                tc_dict = json.loads(tc) if isinstance(tc, str) else tc
-                tool_name = tc_dict.get("tool", "unknown")
+        try:
+            from models.tool_schemas import TOOL_SCHEMAS
+            tool_names = list(TOOL_SCHEMAS.keys())
+
+            predicted_tools = []
+            for tc in tool_calls:
+                if isinstance(tc, dict):
+                    tool_name = tc.get("tool", "unknown")
+                else:
+                    tool_name = extract_tool_from_call(str(tc))
+
                 if tool_name in tool_names:
                     predicted_tools.append(tool_names.index(tool_name))
                 else:
                     predicted_tools.append(-1)
-            except:
-                predicted_tools.append(-1)
-        
-        # Compare labels to predicted tools
-        correct = sum(1 for pred, label in zip(predicted_tools, labels_np) if pred == label and pred != -1)
-        total = sum(1 for pred in predicted_tools if pred != -1)
-        metrics["cluster_accuracy"] = correct / total if total > 0 else 0.0
+
+            correct = sum(1 for pred, label in zip(predicted_tools, labels_np) if pred == label and pred != -1)
+            total = sum(1 for pred in predicted_tools if pred != -1)
+            metrics["cluster_accuracy"] = correct / total if total > 0 else 0.0
+        except ImportError:
+            metrics["cluster_accuracy"] = 0.0
     
-    # Embedding statistics
-    embedding_stats = embedding_statistics(embeddings)
+    # Embedding statistics (convert back to torch for consistency)
+    if isinstance(embeddings, torch.Tensor):
+        embedding_stats = embedding_statistics(embeddings.float())
+    else:
+        embedding_stats = embedding_statistics(torch.from_numpy(embeddings_np))
     metrics.update(embedding_stats)
     
     return metrics

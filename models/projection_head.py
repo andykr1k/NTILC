@@ -22,7 +22,7 @@ class ProjectionHead(nn.Module):
         input_dim: int = 1024,
         output_dim: int = 128,
         hidden_dim: int = 512,
-        dropout: float = 0.15,
+        dropout: float = 0.25,
         use_batch_norm: bool = True
     ):
         """

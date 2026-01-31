@@ -4,14 +4,14 @@ Loss functions for NTILC training.
 Includes:
 - Contrastive loss for embedding diversity
 - Embedding regularization losses
-- Combined loss function
+
+FIXED: Corrected Circle Loss optimal points and proper gradient handling.
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Optional, List
-import json
+from typing import Dict
 
 
 class ContrastiveLoss(nn.Module):
@@ -42,14 +42,14 @@ class ContrastiveLoss(nn.Module):
     def forward(
         self,
         embeddings: torch.Tensor,
-        tool_calls: List[str] = None
+        labels: torch.Tensor = None
     ) -> torch.Tensor:
         """
         Compute contrastive loss on embeddings.
         
         Args:
             embeddings: (batch_size, embedding_dim) tensor
-            tool_calls: Optional list of tool call strings for extracting labels
+            labels: (batch_size,) tensor of class labels
             
         Returns:
             Scalar loss tensor
@@ -58,7 +58,7 @@ class ContrastiveLoss(nn.Module):
         device = embeddings.device
         
         if batch_size < 2:
-            return torch.tensor(0.0, device=device)
+            return embeddings.new_zeros(1, requires_grad=True)
         
         # Normalize embeddings for cosine similarity
         embeddings_norm = F.normalize(embeddings, p=2, dim=1)
@@ -66,12 +66,9 @@ class ContrastiveLoss(nn.Module):
         # Compute similarity matrix
         similarity_matrix = torch.matmul(embeddings_norm, embeddings_norm.T)  # (B, B)
         
-        # Extract tool labels if provided
-        if self.use_tool_labels and tool_calls is not None:
-            tool_labels = self._extract_tool_labels(tool_calls)
-            
+        # Use labels if provided
+        if self.use_tool_labels and labels is not None:
             # Create positive/negative masks based on tool type
-            labels = torch.tensor([self._tool_to_idx(t) for t in tool_labels], device=device)
             positive_mask = labels.unsqueeze(0) == labels.unsqueeze(1)  # Same tool
             negative_mask = ~positive_mask
             
@@ -81,11 +78,10 @@ class ContrastiveLoss(nn.Module):
             negative_mask = negative_mask & ~diagonal_mask
             
             # InfoNCE-style loss
-            # For each sample, maximize similarity to positives, minimize to negatives
             sim_scaled = similarity_matrix / self.temperature
             
             # Compute loss for samples that have both positives and negatives
-            loss = torch.tensor(0.0, device=device)
+            loss = embeddings.new_zeros(1, requires_grad=True)
             valid_samples = 0
             
             for i in range(batch_size):
@@ -97,12 +93,12 @@ class ContrastiveLoss(nn.Module):
                     pos_sim = sim_scaled[i][pos_mask_i]
                     neg_sim = sim_scaled[i][neg_mask_i]
                     
-                    # InfoNCE: log(exp(pos) / (exp(pos) + sum(exp(neg))))
+                    # InfoNCE: -log(exp(pos) / (exp(pos) + sum(exp(neg))))
                     # Average over all positives
                     for pos_s in pos_sim:
-                        numerator = torch.exp(pos_s)
-                        denominator = numerator + torch.exp(neg_sim).sum()
-                        loss -= torch.log(numerator / (denominator + 1e-8))
+                        # Use log-sum-exp for numerical stability
+                        logits = torch.cat([pos_s.unsqueeze(0), neg_sim])
+                        loss = loss - F.log_softmax(logits, dim=0)[0]
                         valid_samples += 1
             
             if valid_samples > 0:
@@ -119,35 +115,10 @@ class ContrastiveLoss(nn.Module):
             off_diagonal_sim = similarity_matrix[mask].view(batch_size, batch_size - 1)
             
             # Uniformity loss: push all pairs apart
-            # Using Gaussian potential: exp(-t * ||x - y||^2)
-            # Approximated via cosine similarity
             uniformity_loss = torch.log(torch.exp(off_diagonal_sim / self.temperature).mean() + 1e-8)
             
             return uniformity_loss
-    
-    def _extract_tool_labels(self, tool_calls: List[str]) -> List[str]:
-        """Extract tool name from tool call strings."""
-        labels = []
-        for tc in tool_calls:
-            try:
-                # Try JSON format first
-                data = json.loads(tc)
-                labels.append(data.get("tool", "unknown"))
-            except (json.JSONDecodeError, TypeError):
-                # Try Python format: tool_name(...)
-                if "(" in tc:
-                    labels.append(tc.split("(")[0].strip())
-                else:
-                    labels.append("unknown")
-        return labels
-    
-    def _tool_to_idx(self, tool_name: str) -> int:
-        """Convert tool name to index."""
-        tools = ["search", "calculate", "database_query", "send_email", "web_fetch", "file_read"]
-        try:
-            return tools.index(tool_name)
-        except ValueError:
-            return -1
+
 
 class CircleLoss(nn.Module):
     """
@@ -163,7 +134,7 @@ class CircleLoss(nn.Module):
     def __init__(
         self,
         margin: float = 0.25,
-        gamma: float = 256,
+        gamma: float = 64,
         similarity_type: str = "cosine"
     ):
         """
@@ -177,13 +148,13 @@ class CircleLoss(nn.Module):
         self.gamma = gamma
         self.similarity_type = similarity_type
         
-        # Optimal similarity thresholds
-        self.O_p = 1 + margin  # Optimal positive similarity
-        self.O_n = -margin      # Optimal negative similarity
+        # FIXED: Correct optimal similarity thresholds for cosine similarity [-1, 1]
+        self.O_p = 1 - margin      # Optimal positive similarity (e.g., 0.75 for margin=0.25)
+        self.O_n = -1 + margin     # Optimal negative similarity (e.g., -0.75 for margin=0.25)
         
         # Delta values for weighting
-        self.Delta_p = 1 - margin
-        self.Delta_n = margin
+        self.Delta_p = 1 - margin  # 0.75
+        self.Delta_n = margin      # 0.25
     
     def forward(
         self,
@@ -204,7 +175,7 @@ class CircleLoss(nn.Module):
         device = embeddings.device
         
         if batch_size < 2:
-            return torch.tensor(0.0, device=device, requires_grad=True)
+            return embeddings.new_zeros(1, requires_grad=True)
         
         # Normalize embeddings for cosine similarity
         embeddings_norm = F.normalize(embeddings, p=2, dim=1)
@@ -227,15 +198,13 @@ class CircleLoss(nn.Module):
         num_negatives = negative_mask.sum()
         
         if num_positives == 0 or num_negatives == 0:
-            # Fallback: use simple contrastive loss
-            print(f"Warning: No valid pairs (pos={num_positives}, neg={num_negatives})")
-            return torch.tensor(0.0, device=device, requires_grad=True)
+            return embeddings.new_zeros(1, requires_grad=True)
         
         # Get positive and negative similarities
         sp = similarity_matrix * positive_mask  # Positive pairs
         sn = similarity_matrix * negative_mask  # Negative pairs
         
-        # Compute alpha (weighting factors) - detach to stop gradients
+        # Compute alpha (weighting factors) - detach to stop gradients through alpha
         alpha_p = torch.clamp(self.O_p - sp.detach(), min=0.0)
         alpha_n = torch.clamp(sn.detach() - self.O_n, min=0.0)
         
@@ -251,15 +220,14 @@ class CircleLoss(nn.Module):
         pos_logits = logit_p[positive_mask > 0]
         neg_logits = logit_n[negative_mask > 0]
         
-        # Circle loss formulation: log(1 + sum_p(exp(logit_p)) * sum_n(exp(logit_n)))
+        # Circle loss formulation: log(1 + exp(sum(logit_p) + sum(logit_n)))
         # Use logsumexp for numerical stability
         if len(pos_logits) > 0 and len(neg_logits) > 0:
-            # Method 1: Global loss across all pairs
             pos_term = torch.logsumexp(pos_logits, dim=0)
             neg_term = torch.logsumexp(neg_logits, dim=0)
             loss = F.softplus(pos_term + neg_term)
         else:
-            loss = torch.tensor(0.0, device=device, requires_grad=True)
+            loss = embeddings.new_zeros(1, requires_grad=True)
         
         return loss
 
@@ -273,13 +241,17 @@ class CircleLossV2(nn.Module):
     def __init__(
         self,
         margin: float = 0.25,
-        gamma: float = 256,
+        gamma: float = 64,
         similarity_type: str = "cosine"
     ):
         super().__init__()
         self.margin = margin
         self.gamma = gamma
         self.similarity_type = similarity_type
+        
+        # FIXED: Correct optimal points
+        self.O_p = 1 - margin
+        self.O_n = -1 + margin
     
     def forward(
         self,
@@ -291,7 +263,7 @@ class CircleLossV2(nn.Module):
         device = embeddings.device
         
         if batch_size < 2:
-            return torch.tensor(0.0, device=device, requires_grad=True)
+            return embeddings.new_zeros(1, requires_grad=True)
         
         # Normalize
         embeddings_norm = F.normalize(embeddings, p=2, dim=1)
@@ -318,13 +290,13 @@ class CircleLossV2(nn.Module):
             pos_sim = similarity_matrix[i][pos_mask_i]
             neg_sim = similarity_matrix[i][neg_mask_i]
             
-            # Compute alpha weights
-            alpha_p = torch.clamp(1 + self.margin - pos_sim.detach(), min=0.0)
-            alpha_n = torch.clamp(neg_sim.detach() + self.margin, min=0.0)
+            # Compute alpha weights with correct optimal points
+            alpha_p = torch.clamp(self.O_p - pos_sim.detach(), min=0.0)
+            alpha_n = torch.clamp(neg_sim.detach() - self.O_n, min=0.0)
             
             # Weighted logits
             logit_p = -self.gamma * alpha_p * (pos_sim - (1 - self.margin))
-            logit_n = self.gamma * alpha_n * (neg_sim - self.margin)
+            logit_n = self.gamma * alpha_n * (neg_sim - (-1 + self.margin))
             
             # Circle loss for this sample
             pos_term = torch.logsumexp(logit_p, dim=0)
@@ -335,7 +307,8 @@ class CircleLossV2(nn.Module):
         if len(losses) > 0:
             return torch.stack(losses).mean()
         else:
-            return torch.tensor(0.0, device=device, requires_grad=True)
+            return embeddings.new_zeros(1, requires_grad=True)
+
 
 class EmbeddingRegularizationLoss(nn.Module):
     """
@@ -347,18 +320,21 @@ class EmbeddingRegularizationLoss(nn.Module):
         self,
         l2_weight: float = 0.001,
         variance_weight: float = 0.01,
-        target_norm: float = 1.0
+        target_norm: float = 1.0,
+        target_variance: float = 0.5
     ):
         """
         Args:
             l2_weight: Weight for L2 regularization (keep embeddings bounded)
             variance_weight: Weight for variance loss (encourage diversity)
             target_norm: Target norm for embeddings
+            target_variance: Target variance per dimension (for normalized embeddings, ~0.5 is good)
         """
         super().__init__()
         self.l2_weight = l2_weight
         self.variance_weight = variance_weight
         self.target_norm = target_norm
+        self.target_variance = target_variance
     
     def forward(self, embeddings: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
@@ -386,155 +362,14 @@ class EmbeddingRegularizationLoss(nn.Module):
             var_per_dim = embeddings.var(dim=0)  # (embed_dim,)
             mean_var = var_per_dim.mean()
             
-            # Penalize low variance (collapse) - use negative log to encourage high variance
-            # variance_loss = -torch.log(mean_var + 1e-8)
-            # Alternative: penalize if variance is below a threshold
-            target_var = 0.1  # Target variance per dimension
-            variance_loss = F.relu(target_var - mean_var)
+            # FIXED: Better variance loss that penalizes deviation from target
+            # This prevents both collapse (too low) and explosion (too high)
+            variance_loss = (mean_var - self.target_variance) ** 2
             losses["variance_loss"] = variance_loss * self.variance_weight
         else:
-            losses["variance_loss"] = torch.tensor(0.0, device=device)
+            losses["variance_loss"] = embeddings.new_zeros(1)
         
         # Total regularization loss
         losses["total_reg_loss"] = losses["l2_loss"] + losses["variance_loss"]
         
         return losses
-
-
-class CombinedAutoencoderLoss(nn.Module):
-    """
-    Combined loss function for autoencoder training.
-    
-    Includes:
-    - Reconstruction loss (cross-entropy)
-    - Contrastive loss (embedding diversity)
-    - Regularization losses
-    """
-    
-    def __init__(
-        self,
-        pad_token_id: int,
-        label_smoothing: float = 0.1,
-        contrastive_weight: float = 0.1,
-        contrastive_temperature: float = 0.07,
-        l2_weight: float = 0.001,
-        variance_weight: float = 0.01,
-        use_contrastive: bool = True
-    ):
-        super().__init__()
-        
-        self.reconstruction_loss = nn.CrossEntropyLoss(
-            reduction='none',
-            ignore_index=pad_token_id,
-            label_smoothing=label_smoothing
-        )
-        
-        self.contrastive_loss = ContrastiveLoss(
-            temperature=contrastive_temperature,
-            use_tool_labels=True
-        )
-        
-        self.regularization_loss = EmbeddingRegularizationLoss(
-            l2_weight=l2_weight,
-            variance_weight=variance_weight
-        )
-        
-        self.contrastive_weight = contrastive_weight
-        self.use_contrastive = use_contrastive
-    
-    def forward(
-        self,
-        logits: torch.Tensor,
-        targets: torch.Tensor,
-        attention_mask: torch.Tensor,
-        embeddings: torch.Tensor,
-        tool_calls: List[str] = None
-    ) -> Dict[str, torch.Tensor]:
-        """
-        Compute combined loss.
-        
-        Args:
-            logits: (batch_size, seq_len, vocab_size)
-            targets: (batch_size, seq_len)
-            attention_mask: (batch_size, seq_len)
-            embeddings: (batch_size, embedding_dim)
-            tool_calls: List of tool call strings
-            
-        Returns:
-            Dictionary with all loss terms
-        """
-        device = logits.device
-        
-        # Reconstruction loss
-        loss_per_token = self.reconstruction_loss(
-            logits.reshape(-1, logits.size(-1)),
-            targets.reshape(-1)
-        )
-        mask_flat = attention_mask.reshape(-1).float()
-        reconstruction_loss = (loss_per_token * mask_flat).sum() / (mask_flat.sum() + 1e-8)
-        
-        # Contrastive loss
-        if self.use_contrastive:
-            contrastive_loss = self.contrastive_loss(embeddings, tool_calls)
-        else:
-            contrastive_loss = torch.tensor(0.0, device=device)
-        
-        # Regularization losses
-        reg_losses = self.regularization_loss(embeddings)
-        
-        # Total loss
-        total_loss = (
-            reconstruction_loss +
-            self.contrastive_weight * contrastive_loss +
-            reg_losses["total_reg_loss"]
-        )
-        
-        return {
-            "total_loss": total_loss,
-            "reconstruction_loss": reconstruction_loss,
-            "contrastive_loss": contrastive_loss,
-            "l2_loss": reg_losses["l2_loss"],
-            "variance_loss": reg_losses["variance_loss"]
-        }
-
-
-class ScheduledSampling:
-    """
-    Implements scheduled sampling for decoder training.
-    
-    Gradually reduces teacher forcing ratio during training
-    to improve model robustness.
-    """
-    
-    def __init__(
-        self,
-        start_ratio: float = 1.0,
-        end_ratio: float = 0.5,
-        warmup_steps: int = 1000,
-        decay_steps: int = 10000
-    ):
-        """
-        Args:
-            start_ratio: Initial teacher forcing ratio (1.0 = full teacher forcing)
-            end_ratio: Final teacher forcing ratio
-            warmup_steps: Steps before starting decay
-            decay_steps: Steps over which to decay
-        """
-        self.start_ratio = start_ratio
-        self.end_ratio = end_ratio
-        self.warmup_steps = warmup_steps
-        self.decay_steps = decay_steps
-    
-    def get_ratio(self, step: int) -> float:
-        """Get teacher forcing ratio for current step."""
-        if step < self.warmup_steps:
-            return self.start_ratio
-        
-        progress = min(1.0, (step - self.warmup_steps) / self.decay_steps)
-        ratio = self.start_ratio - progress * (self.start_ratio - self.end_ratio)
-        return ratio
-    
-    def should_use_teacher_forcing(self, step: int) -> bool:
-        """Randomly decide whether to use teacher forcing based on current ratio."""
-        import random
-        return random.random() < self.get_ratio(step)

@@ -18,8 +18,18 @@ except ImportError:
 import re
 
 
-def extract_tool(tool_call: str) -> str:
-    """Extract tool name from tool call string."""
+def extract_tool(tool_call) -> str:
+    """Extract tool name from tool call string or dict."""
+    if isinstance(tool_call, dict):
+        return tool_call.get("tool", "unknown")
+    tool_call = str(tool_call).strip()
+    if tool_call.startswith("{"):
+        try:
+            import json
+            parsed = json.loads(tool_call)
+            return parsed.get("tool", "unknown")
+        except json.JSONDecodeError:
+            pass
     match = re.match(r'(\w+)\(', tool_call)
     return match.group(1) if match else "unknown"
 

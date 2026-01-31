@@ -1,0 +1,1 @@
+nohup python -m training.train_cluster_retrieval > logs/CR/train.log 2>&1

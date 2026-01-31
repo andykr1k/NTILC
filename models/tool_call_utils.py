@@ -5,27 +5,58 @@ Utility functions for parsing and validating tool calls.
 import json
 import re
 from typing import Dict, List, Any, Optional, Tuple
-from ablation.tool_schemas import TOOL_SCHEMAS
+from models.tool_schemas import TOOL_SCHEMAS
 
 
 def parse_tool_call(tool_call_str: str) -> Optional[Dict[str, Any]]:
     """
-    Parse a tool call JSON string into structured format.
+    Parse a tool call string (JSON or python function-call) into structured format.
 
     Args:
-        tool_call_str: JSON string representing tool call
+        tool_call_str: Tool call string
 
     Returns:
         Parsed tool call dict or None if invalid
     """
+    # JSON format
     try:
         data = json.loads(tool_call_str)
-        if not isinstance(data, dict):
-            return None
-        if "tool" not in data or "arguments" not in data:
-            return None
-        return data
+        if isinstance(data, dict) and "tool" in data and "arguments" in data:
+            return data
     except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+
+    # Python function-call format: tool_name(arg='value', arg2=3)
+    try:
+        match = re.match(r'(\w+)\((.*)\)', tool_call_str.strip(), re.DOTALL)
+        if not match:
+            return None
+        tool_name = match.group(1)
+        args_str = match.group(2).strip()
+        arguments: Dict[str, Any] = {}
+
+        if args_str:
+            arg_pattern = r"(\w+)=(?:'([^']*)'|\"([^\"]*)\"|([+-]?\d+(?:\.\d+)?)|(True|False|None))"
+            for m in re.finditer(arg_pattern, args_str):
+                key = m.group(1)
+                raw = m.group(2) or m.group(3) or m.group(4) or m.group(5)
+                value: Any = raw
+                if raw in ("True", "False"):
+                    value = raw == "True"
+                elif raw == "None":
+                    value = None
+                else:
+                    try:
+                        value = int(raw)
+                    except (ValueError, TypeError):
+                        try:
+                            value = float(raw)
+                        except (ValueError, TypeError):
+                            pass
+                arguments[key] = value
+
+        return {"tool": tool_name, "arguments": arguments}
+    except Exception:
         return None
 
 

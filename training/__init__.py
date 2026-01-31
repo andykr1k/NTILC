@@ -1,13 +1,13 @@
 """
-Training package for NTILC.
+Training package for NTILC (cluster-based).
 """
 
-from .config import AutoencoderConfig, DataGeneratorConfig
-from .data_generator import ToolInvocationGenerator
-from .train_autoencoder import main as train_autoencoder
+from .config import IntentEmbeddingConfig, DataGeneratorConfig
+from .data_generator import ToolInvocationGenerator, NaturalLanguageToolCallGenerator
 
 __all__ = [
+    "IntentEmbeddingConfig",
     "DataGeneratorConfig",
     "ToolInvocationGenerator",
-    "train_autoencoder"
+    "NaturalLanguageToolCallGenerator",
 ]

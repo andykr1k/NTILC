@@ -14,20 +14,19 @@ from typing import Tuple, Dict, List, Any
 import wandb
 from tqdm import tqdm
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoTokenizer, T5EncoderModel
-import json
+from transformers import AutoTokenizer
 import os
 import numpy as np
 
 from models.intent_embedder import ToolIntentEmbedder
 from models.projection_head import ProjectionHead
 from models.cluster_retrieval import ClusterRetrieval
+from models.query_encoder import QueryEncoder
 from training.config import IntentEmbeddingConfig
 from training.data_generator import NaturalLanguageToolCallGenerator, OutputFormat
-from ablation.tool_schemas import TOOL_SCHEMAS
+from models.tool_schemas import TOOL_SCHEMAS
 
 
 class QueryClusterDataset(Dataset):
@@ -37,6 +36,7 @@ class QueryClusterDataset(Dataset):
         self,
         queries: List[str],
         tool_calls: List[Dict[str, Any]],
+        tool_labels: List[int],
         intent_embedder: ToolIntentEmbedder,
         projection_head: ProjectionHead,
         tokenizer: AutoTokenizer,
@@ -53,6 +53,7 @@ class QueryClusterDataset(Dataset):
         """
         self.queries = queries
         self.tool_calls = tool_calls
+        self.labels = tool_labels
         self.tokenizer = tokenizer
         self.max_length = max_length
         
@@ -96,66 +97,9 @@ class QueryClusterDataset(Dataset):
             "input_ids": encoded["input_ids"].squeeze(0),
             "attention_mask": encoded["attention_mask"].squeeze(0),
             "target_embedding": target_embedding,
-            "query": query,
-            "tool_call": self.tool_calls[idx]
+            "label": self.labels[idx]
         }
 
-
-class QueryEncoder(nn.Module):
-    """Encodes natural language queries to 128-D embeddings."""
-    
-    def __init__(
-        self,
-        base_model: str = "google/flan-t5-base",
-        output_dim: int = 128,
-        dropout: float = 0.15
-    ):
-        super().__init__()
-        
-        self.tokenizer = AutoTokenizer.from_pretrained(base_model)
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-        
-        self.encoder = T5EncoderModel.from_pretrained(base_model)
-        config = self.encoder.config
-        hidden_dim = config.d_model if hasattr(config, 'd_model') else config.hidden_size
-        
-        # Attention pooling
-        self.attention_pool = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.Tanh(),
-            nn.Linear(hidden_dim, 1),
-            nn.Softmax(dim=1)
-        )
-        
-        # Projection to 128-D
-        self.projection = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, output_dim),
-            nn.LayerNorm(output_dim)
-        )
-    
-    def forward(self, input_ids, attention_mask):
-        """Encode query to 128-D embedding."""
-        # Encode
-        outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
-        hidden_states = outputs.last_hidden_state
-        
-        # Pool
-        attention_weights = self.attention_pool(hidden_states)
-        mask_expanded = attention_mask.unsqueeze(-1).to(hidden_states.dtype)
-        attention_weights = attention_weights * mask_expanded
-        attention_weights = attention_weights / (attention_weights.sum(dim=1, keepdim=True) + 1e-9)
-        pooled = (hidden_states * attention_weights).sum(dim=1)
-        
-        # Project
-        projected = self.projection(pooled)
-        projected = F.normalize(projected, p=2, dim=1)
-        
-        return projected
 
 
 def train_epoch(
@@ -188,6 +132,8 @@ def train_epoch(
         
         # Forward pass
         query_embeddings = query_encoder(input_ids, attention_mask)
+        if target_embeddings.dtype != query_embeddings.dtype:
+            target_embeddings = target_embeddings.to(query_embeddings.dtype)
         
         # Compute losses
         # MSE loss
@@ -268,9 +214,12 @@ def evaluate(
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
             target_embeddings = batch["target_embedding"].to(device)
+            labels = batch["label"].to(device)
             
             # Forward pass
             query_embeddings = query_encoder(input_ids, attention_mask)
+            if target_embeddings.dtype != query_embeddings.dtype:
+                target_embeddings = target_embeddings.to(query_embeddings.dtype)
             
             # Compute losses (same as training)
             mse_loss = F.mse_loss(query_embeddings, target_embeddings)
@@ -286,15 +235,19 @@ def evaluate(
             # Retrieve clusters
             results = cluster_retrieval(
                 query_embeddings,
-                cluster_embeddings=cluster_centroids.to(device),
+                cluster_embeddings=cluster_centroids.to(device, dtype=query_embeddings.dtype),
                 top_k=1
             )
+            pred_ids = results["cluster_ids"].squeeze(1)
+            valid_mask = pred_ids >= 0
+            correct_clusters += (pred_ids[valid_mask] == labels[valid_mask]).sum().item()
+            total_samples += valid_mask.sum().item()
             
             # Compute similarity to target
             similarities = F.cosine_similarity(query_embeddings, target_embeddings, dim=1)
             all_similarities.extend(similarities.cpu().tolist())
             
-            total_samples += len(query_embeddings)
+            # total_samples updated above with valid_mask
     
     avg_similarity = np.mean(all_similarities) if all_similarities else 0.0
     
@@ -317,9 +270,18 @@ def main():
         raise FileNotFoundError(f"Phase 1 checkpoint not found: {checkpoint_path}")
     
     print(f"Loading Phase 1 models from {checkpoint_path}...")
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    checkpoint = torch.load(checkpoint_path, map_location="cuda:1", weights_only=False)
     
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is required but not available.")
+    device = torch.device("cuda:1")
+    dtype_map = {
+        "float16": torch.float16,
+        "bfloat16": torch.bfloat16,
+        "float32": torch.float32
+    }
+    model_torch_dtype = config.torch_dtype
+    use_dtype = dtype_map.get(model_torch_dtype, torch.float32)
     
     # Initialize frozen models
     intent_embedder = ToolIntentEmbedder(
@@ -327,7 +289,7 @@ def main():
         embedding_dim=config.intent_embedding_dim,
         pooling_strategy=config.pooling_strategy,
         dropout=config.dropout,
-        torch_dtype="bfloat16" if device.type == "cuda" else "float32",
+        torch_dtype=model_torch_dtype,
         max_length=config.max_length
     ).to(device)
     intent_embedder.load_state_dict(checkpoint["intent_embedder_state_dict"])
@@ -339,7 +301,7 @@ def main():
         input_dim=config.intent_embedding_dim,
         output_dim=config.projection_dim,
         dropout=config.dropout
-    ).to(device)
+    ).to(device).to(use_dtype)
     projection_head.load_state_dict(checkpoint["projection_head_state_dict"])
     for param in projection_head.parameters():
         param.requires_grad = False
@@ -356,7 +318,7 @@ def main():
     
     # Generate training data
     print("Generating training data...")
-    nl_generator = NaturalLanguageToolCallGenerator(output_format=OutputFormat.JSON)
+    nl_generator = NaturalLanguageToolCallGenerator(output_format=OutputFormat.PYTHON)
     
     train_data = []
     for _ in range(config.num_train_samples):
@@ -365,7 +327,12 @@ def main():
     
     # Create datasets
     queries = [item["query"] for item in train_data]
-    tool_calls = [item["tool_call"] for item in train_data]
+    tool_calls = [item["tool_call_dict"] for item in train_data]
+    tool_names = list(TOOL_SCHEMAS.keys())
+    tool_labels = [
+        tool_names.index(tc.get("tool", "unknown")) if tc.get("tool", "unknown") in tool_names else -1
+        for tc in tool_calls
+    ]
     
     tokenizer = AutoTokenizer.from_pretrained(config.encoder_model)
     if tokenizer.pad_token is None:
@@ -374,6 +341,7 @@ def main():
     train_dataset = QueryClusterDataset(
         queries,
         tool_calls,
+        tool_labels,
         intent_embedder,
         projection_head,
         tokenizer,
@@ -391,8 +359,9 @@ def main():
     query_encoder = QueryEncoder(
         base_model=config.encoder_model,
         output_dim=config.projection_dim,
-        dropout=config.dropout
-    ).to(device)
+        dropout=config.dropout,
+        torch_dtype=model_torch_dtype
+    ).to(device).to(use_dtype)
     
     # Initialize cluster retrieval
     # Compute cluster centroids from training data
@@ -406,12 +375,7 @@ def main():
     )
     
     # Simple clustering: one cluster per tool
-    tool_names = list(TOOL_SCHEMAS.keys())
-    cluster_assignments = torch.zeros(len(train_data), dtype=torch.long)
-    for i, tc in enumerate(tool_calls):
-        tool_name = tc.get("tool", "unknown")
-        if tool_name in tool_names:
-            cluster_assignments[i] = tool_names.index(tool_name)
+    cluster_assignments = torch.tensor(tool_labels, dtype=torch.long)
     
     cluster_retrieval.update_cluster_centroids(all_embeddings, cluster_assignments)
     cluster_centroids = cluster_retrieval.get_cluster_centroids()

@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any, Tuple
 import json
 import re
 
-from ablation.tool_schemas import TOOL_SCHEMAS
+from models.tool_schemas import TOOL_SCHEMAS
 
 
 class ArgumentNecessityClassifier(nn.Module):
@@ -24,7 +24,8 @@ class ArgumentNecessityClassifier(nn.Module):
     def __init__(
         self,
         hidden_dim: int = 512,
-        num_tools: int = 6,
+        query_embedding_dim: int = 128,
+        num_tools: Optional[int] = None,
         dropout: float = 0.15
     ):
         """
@@ -35,10 +36,17 @@ class ArgumentNecessityClassifier(nn.Module):
         """
         super().__init__()
         
-        self.num_tools = num_tools
+        self.num_tools = num_tools or len(TOOL_SCHEMAS)
+        self.query_embedding_dim = query_embedding_dim
         
         # Tool embedding
-        self.tool_embedding = nn.Embedding(num_tools, hidden_dim)
+        self.tool_embedding = nn.Embedding(self.num_tools, hidden_dim)
+
+        # Project query embeddings to hidden_dim if needed
+        if query_embedding_dim != hidden_dim:
+            self.query_projection = nn.Linear(query_embedding_dim, hidden_dim)
+        else:
+            self.query_projection = nn.Identity()
         
         # Argument necessity classifier
         # Input: tool embedding + query embedding
@@ -80,8 +88,9 @@ class ArgumentNecessityClassifier(nn.Module):
         # Get tool embeddings
         tool_embeds = self.tool_embedding(tool_ids)  # (batch_size, hidden_dim)
         
-        # Concatenate tool and query embeddings
-        combined = torch.cat([tool_embeds, query_embeddings], dim=1)  # (batch_size, hidden_dim * 2)
+        # Project query embeddings if needed, then concatenate
+        query_proj = self.query_projection(query_embeddings)
+        combined = torch.cat([tool_embeds, query_proj], dim=1)  # (batch_size, hidden_dim * 2)
         
         # Get shared features
         features = self.classifier(combined)  # (batch_size, hidden_dim // 2)
@@ -227,7 +236,14 @@ class ArgumentValueGenerator(nn.Module):
             matches = re.findall(email_pattern, query)
             if matches:
                 return matches[0]
-        
+
+        # For lists of emails (e.g., cc)
+        if arg_type == "List[email]" or arg_name.lower() in ("cc", "bcc"):
+            email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+            matches = re.findall(email_pattern, query)
+            if matches:
+                return matches
+
         # For URLs
         if arg_type == "str" and ("url" in arg_name.lower() or "link" in arg_name.lower()):
             url_pattern = r'https?://[^\s]+'
@@ -257,7 +273,59 @@ class ArgumentValueGenerator(nn.Module):
             for option in options:
                 if option.lower() in query_lower:
                     return option
-        
+
+        return None
+
+    def fallback_value(
+        self,
+        query: str,
+        arg_name: str,
+        arg_type: str,
+        tool_name: str
+    ) -> Optional[Any]:
+        """
+        Fast fallback for required arguments when extraction fails.
+        Keeps output a valid tool call without decoding.
+        """
+        schema = TOOL_SCHEMAS.get(tool_name, {})
+        param_info = schema.get("parameters", {}).get(arg_name, {})
+
+        # Prefer explicit defaults if present
+        if "default" in param_info:
+            return param_info["default"]
+
+        arg_name_lower = arg_name.lower()
+
+        if arg_type == "enum":
+            options = param_info.get("options", [])
+            return options[0] if options else None
+
+        if arg_type == "email":
+            return "user@example.com"
+
+        if arg_type == "List[email]":
+            return []
+
+        if arg_type == "bool":
+            return False
+
+        if arg_type == "int":
+            return 0
+
+        if arg_type == "float":
+            return 0.0
+
+        # Heuristic for common string fields
+        if arg_name_lower in ("query", "q", "text", "prompt"):
+            return query
+        if arg_name_lower == "subject":
+            return query[:60]
+        if arg_name_lower in ("body", "message", "sql", "expression", "url", "path"):
+            return query
+
+        if arg_type == "str":
+            return query
+
         return None
     
     def forward(

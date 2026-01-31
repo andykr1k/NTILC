@@ -4,6 +4,8 @@ Training script for NTILC intent embedding (NEW ARCHITECTURE).
 Trains intent embedder to map tool intents to 1024-D embeddings,
 with projection head to 128-D for similarity computation.
 Uses Circle Loss for metric learning and cluster formation.
+
+FIXED: Added embedding noise and query augmentation to prevent collapse.
 """
 import sys
 from pathlib import Path
@@ -12,15 +14,16 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from typing import Tuple, Dict, List, Any
+import math
 import wandb
 from tqdm import tqdm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
-import json
 import os
 import numpy as np
+import random
 from collections import defaultdict
 
 from models.intent_embedder import ToolIntentEmbedder
@@ -29,7 +32,29 @@ from training.config import IntentEmbeddingConfig
 from training.data_generator import ToolInvocationGenerator, NaturalLanguageToolCallGenerator, OutputFormat
 from training.losses import CircleLoss, ContrastiveLoss, EmbeddingRegularizationLoss
 from evaluation.metrics import compute_cluster_metrics
-from ablation.tool_schemas import TOOL_SCHEMAS
+from models.tool_schemas import TOOL_SCHEMAS
+
+
+def augment_query(query: str) -> str:
+    """Add MORE variation to prevent collapse."""
+    prefixes = [
+        "", "Please ", "Could you ", "I need to ", "Help me ", "Can you ",
+        "Would you ", "I'd like to ", "I want to ", "Let me ", "Go ahead and "
+    ]
+    suffixes = [
+        "", " please", " thanks", " now", " ASAP", "?", ".",
+        " for me", " right away", " if possible", " when you can"
+    ]
+    
+    # Always augment (100% instead of 70%)
+    prefix = random.choice(prefixes)
+    suffix = random.choice(suffixes)
+    
+    # Also randomly add/remove punctuation
+    if random.random() < 0.3:
+        query = query.rstrip('.?!')
+    
+    return prefix + query + suffix
 
 
 class IntentDataset(Dataset):
@@ -110,28 +135,33 @@ def train_epoch(
     
     progress_bar = tqdm(dataloader, desc=f"Training Epoch {epoch+1}")
     
+    optimizer.zero_grad(set_to_none=True)
     for batch_idx, batch in enumerate(progress_bar):
         tool_calls = [item["tool_call"] for item in batch]
-        queries = [item["query"] for item in batch if item["query"] is not None]
+        queries = [item["query"] for item in batch]
         labels = torch.tensor([item["label"] for item in batch], device=device)
         
         # Forward pass: intent embedding
         intent_embeddings = intent_embedder(
             tool_calls=tool_calls,
-            queries=queries if queries else None
+            queries=queries
         )  # (batch_size, 1024)
+        
+        # ADDED: Add noise to prevent collapse
+        if intent_embedder.training and hasattr(config, 'embedding_noise_std'):
+            noise = torch.randn_like(intent_embeddings) * config.embedding_noise_std
+            intent_embeddings = intent_embeddings + noise
         
         # Project to 128-D
         projected_embeddings = projection_head(intent_embeddings)  # (batch_size, 128)
         
         # Compute losses
-        # Circle Loss on projected embeddings
         circle_loss = circle_loss_fn(projected_embeddings, labels)
         
-        # Contrastive loss (optional)
-        contrastive_loss = torch.tensor(0.0, device=device)
         if config.use_contrastive_loss:
             contrastive_loss = contrastive_loss_fn(projected_embeddings, labels)
+        else:
+            contrastive_loss = projected_embeddings.new_zeros(1)
         
         # Regularization losses
         reg_losses = reg_loss_fn(intent_embeddings)
@@ -144,11 +174,12 @@ def train_epoch(
         )
         
         # Backward pass
-        optimizer.zero_grad()
         loss = total_loss / config.gradient_accumulation_steps
         loss.backward()
         
-        if (batch_idx + 1) % config.gradient_accumulation_steps == 0:
+        is_accum_step = (batch_idx + 1) % config.gradient_accumulation_steps == 0
+        is_last_batch = (batch_idx + 1) == len(dataloader)
+        if is_accum_step or is_last_batch:
             torch.nn.utils.clip_grad_norm_(
                 list(intent_embedder.parameters()) + list(projection_head.parameters()),
                 config.gradient_clip
@@ -156,6 +187,7 @@ def train_epoch(
             optimizer.step()
             if scheduler is not None:
                 scheduler.step()
+            optimizer.zero_grad(set_to_none=True)
         
         # Accumulate losses
         total_losses["total_loss"] += total_loss.item()
@@ -167,7 +199,7 @@ def train_epoch(
         
         current_step = global_step + batch_idx
         
-        # Update progress bar
+        # Update progress bar and log
         if current_step % config.log_interval == 0:
             avg_loss = total_loss.item()
             progress_bar.set_postfix({
@@ -223,22 +255,24 @@ def evaluate(
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Evaluating"):
             tool_calls = [item["tool_call"] for item in batch]
-            queries = [item["query"] for item in batch if item["query"] is not None]
+            queries = [item["query"] for item in batch]
             labels = torch.tensor([item["label"] for item in batch], device=device)
             
-            # Forward pass
+            # Forward pass (no noise during eval)
             intent_embeddings = intent_embedder(
                 tool_calls=tool_calls,
-                queries=queries if queries else None
+                queries=queries
             )
             projected_embeddings = projection_head(intent_embeddings)
             
-            # Compute losses (same as training)
+            # Compute losses
             circle_loss = circle_loss_fn(projected_embeddings, labels)
+            
             if config.use_contrastive_loss:
                 contrastive_loss = contrastive_loss_fn(projected_embeddings, labels)
             else:
-                contrastive_loss = torch.tensor(0.0, device=device)
+                contrastive_loss = projected_embeddings.new_zeros(1)
+            
             reg_losses = reg_loss_fn(intent_embeddings)
             
             val_loss = (
@@ -285,65 +319,93 @@ def main():
         wandb.init(
             project=config.wandb_project,
             entity=config.wandb_entity,
-            name=config.wandb_run_name or "intent_embedding",
+            name=config.wandb_run_name or "intent_embedder",
             config=config.__dict__
         )
     
     # Device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is required but not available.")
+    device = torch.device("cuda:1")
     print(f"Using device: {device}")
     
     # Create output directory
     os.makedirs(config.output_dir, exist_ok=True)
     
-    # Generate training data WITH natural language queries
+    # Generate training/validation data WITH natural language queries AND augmentation
     print("Generating training data with natural language queries...")
-    nl_generator = NaturalLanguageToolCallGenerator(output_format=OutputFormat.JSON)
+    nl_generator = NaturalLanguageToolCallGenerator(output_format=OutputFormat.PYTHON)
     
-    train_data = []
-    for _ in range(config.num_train_samples):
-        # Generate (query, tool_call) pair
+    total_samples = config.num_train_samples + config.num_val_samples
+    all_data = []
+    for _ in range(total_samples):
         pair = nl_generator.generate_pair()
-        
-        # Parse tool call
-        try:
-            tool_call_dict = json.loads(pair["tool_call"])
-            train_data.append({
-                "tool_call": tool_call_dict,
-                "query": pair["query"]
-            })
-        except json.JSONDecodeError:
-            continue
+        tool_call_dict = pair["tool_call_dict"]
+
+        original_query = pair["query"]
+        if random.random() < config.query_augmentation_prob:
+            augmented_query = augment_query(original_query)
+        else:
+            augmented_query = original_query
+
+        all_data.append({
+            "tool_call": tool_call_dict,
+            "query": augmented_query
+        })
+    
+    # Print dataset statistics
+    print(f"\nGenerated {len(all_data)} total samples")
+    tool_counts = {}
+    for item in all_data:
+        tool = item["tool_call"].get("tool", "unknown")
+        tool_counts[tool] = tool_counts.get(tool, 0) + 1
+    print("Tool distribution:")
+    for tool, count in sorted(tool_counts.items()):
+        print(f"  {tool}: {count}")
+    
+    # Shuffle and split into train/val (no leakage)
+    rng = random.Random(42)
+    rng.shuffle(all_data)
+    train_data = all_data[:config.num_train_samples]
+    val_data = all_data[config.num_train_samples:config.num_train_samples + config.num_val_samples]
     
     # Create datasets WITH queries
     train_tool_calls = [item["tool_call"] for item in train_data]
     train_queries = [item["query"] for item in train_data]
     train_dataset = IntentDataset(train_tool_calls, queries=train_queries)
     
-    val_tool_calls = [item["tool_call"] for item in train_data[:config.num_val_samples]]
-    val_queries = [item["query"] for item in train_data[:config.num_val_samples]]
+    val_tool_calls = [item["tool_call"] for item in val_data]
+    val_queries = [item["query"] for item in val_data]
     val_dataset = IntentDataset(val_tool_calls, queries=val_queries)
     
-    # Create DataLoaders with custom collate function
+    print(f"Train dataset size: {len(train_dataset)}")
+    print(f"Val dataset size: {len(val_dataset)}")
+    
+    # Create DataLoaders
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.batch_size,
         shuffle=True,
         num_workers=2,
-        collate_fn=collate_intent_batch  # FIXED: Add custom collate
+        collate_fn=collate_intent_batch
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=config.batch_size,
         shuffle=False,
         num_workers=2,
-        collate_fn=collate_intent_batch  # FIXED: Add custom collate
+        collate_fn=collate_intent_batch
     )
     
     # Initialize models
-    print("Initializing models...")
-    # Determine dtype
-    use_dtype = torch.bfloat16 if device.type == "cuda" else torch.float32
+    print("\nInitializing models...")
+    dtype_map = {
+        "float16": torch.float16,
+        "bfloat16": torch.bfloat16,
+        "float32": torch.float32
+    }
+    model_torch_dtype = config.torch_dtype
+    use_dtype = dtype_map.get(model_torch_dtype, torch.float32)
     
     intent_embedder = ToolIntentEmbedder(
         model_name=config.encoder_model,
@@ -352,7 +414,7 @@ def main():
         dropout=config.dropout,
         freeze_base=config.freeze_encoder,
         freeze_layers=config.freeze_encoder_layers,
-        torch_dtype="bfloat16" if device.type == "cuda" else "float32",
+        torch_dtype=model_torch_dtype,
         max_length=config.max_length
     ).to(device)
     
@@ -360,7 +422,15 @@ def main():
         input_dim=config.intent_embedding_dim,
         output_dim=config.projection_dim,
         dropout=config.dropout
-    ).to(device).to(use_dtype)  # Convert to same dtype as embedder
+    ).to(device).to(use_dtype)
+    
+    # Print model info
+    total_params = sum(p.numel() for p in intent_embedder.parameters())
+    trainable_params = sum(p.numel() for p in intent_embedder.parameters() if p.requires_grad)
+    print(f"Intent Embedder - Total params: {total_params:,}, Trainable: {trainable_params:,}")
+    
+    proj_params = sum(p.numel() for p in projection_head.parameters())
+    print(f"Projection Head - Total params: {proj_params:,}")
     
     # Loss functions
     circle_loss_fn = CircleLoss(
@@ -368,11 +438,21 @@ def main():
         gamma=config.circle_loss_gamma,
         similarity_type="cosine"
     )
-    contrastive_loss_fn = ContrastiveLoss(temperature=config.contrastive_temperature)
+    contrastive_loss_fn = ContrastiveLoss(
+        temperature=config.contrastive_temperature,
+        use_tool_labels=True
+    )
     reg_loss_fn = EmbeddingRegularizationLoss(
         l2_weight=config.embedding_l2_weight,
-        variance_weight=config.embedding_variance_weight
+        variance_weight=config.embedding_variance_weight,
+        target_variance=1.0 / config.intent_embedding_dim
     )
+    
+    print(f"\nLoss configuration:")
+    print(f"  Circle Loss - margin: {config.circle_loss_margin}, gamma: {config.circle_loss_gamma}")
+    print(f"  Contrastive Loss - temperature: {config.contrastive_temperature}, enabled: {config.use_contrastive_loss}")
+    print(f"  Regularization - L2 weight: {config.embedding_l2_weight}, Variance weight: {config.embedding_variance_weight}")
+    print(f"  Embedding noise std: {config.embedding_noise_std}")
     
     # Optimizer
     optimizer = torch.optim.AdamW(
@@ -382,20 +462,52 @@ def main():
     )
     
     # Scheduler
-    total_steps = len(train_loader) * config.num_epochs
-    warmup_steps = int(total_steps * config.warmup_ratio)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer,
-        T_max=total_steps,
-        eta_min=1e-7
-    )
+    steps_per_epoch = math.ceil(len(train_loader) / config.gradient_accumulation_steps)
+    total_steps = steps_per_epoch * config.num_epochs
+    if config.warmup_steps and config.warmup_steps > 0:
+        warmup_steps = min(config.warmup_steps, total_steps)
+    else:
+        warmup_steps = int(total_steps * config.warmup_ratio)
+    scheduler = None
+    if config.use_lr_scheduler and total_steps > 0:
+        if warmup_steps > 0 and warmup_steps < total_steps:
+            warmup = torch.optim.lr_scheduler.LinearLR(
+                optimizer,
+                start_factor=1e-2,
+                total_iters=warmup_steps
+            )
+            cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                T_max=total_steps - warmup_steps,
+                eta_min=1e-7
+            )
+            scheduler = torch.optim.lr_scheduler.SequentialLR(
+                optimizer,
+                schedulers=[warmup, cosine],
+                milestones=[warmup_steps]
+            )
+        else:
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                T_max=total_steps,
+                eta_min=1e-7
+            )
+    
+    print(f"\nTraining configuration:")
+    print(f"  Epochs: {config.num_epochs}")
+    print(f"  Batch size: {config.batch_size}")
+    print(f"  Learning rate: {config.learning_rate}")
+    print(f"  Total optimizer steps: {total_steps}")
+    print(f"  Warmup steps: {warmup_steps}")
     
     # Training loop
     best_val_loss = float('inf')
     global_step = 0
     
     for epoch in range(config.num_epochs):
-        print(f"\n=== Epoch {epoch+1}/{config.num_epochs} ===")
+        print(f"\n{'='*60}")
+        print(f"Epoch {epoch+1}/{config.num_epochs}")
+        print(f"{'='*60}")
         
         # Train
         train_losses, num_batches = train_epoch(
@@ -426,13 +538,31 @@ def main():
             reg_loss_fn
         )
         
+        # Print summary
+        print(f"\n{'='*60}")
+        print(f"Epoch {epoch+1} Summary")
+        print(f"{'='*60}")
         print(f"Train Loss: {train_losses['total_loss']:.4f}")
-        print(f"Val Loss: {val_metrics.get('total_loss', 0.0):.4f}")
-        print(f"Val Metrics: {val_metrics}")
+        print(f"  - Circle: {train_losses['circle_loss']:.4f}")
+        print(f"  - Contrastive: {train_losses['contrastive_loss']:.4f}")
+        print(f"  - L2: {train_losses['l2_loss']:.6f}")
+        print(f"  - Variance: {train_losses['variance_loss']:.6f}")
+        print(f"\nVal Loss: {val_metrics.get('total_loss', 0.0):.4f}")
+        print(f"  - Circle: {val_metrics.get('circle_loss', 0.0):.4f}")
+        print(f"  - Contrastive: {val_metrics.get('contrastive_loss', 0.0):.4f}")
+        print(f"\nClustering Metrics:")
+        print(f"  - Accuracy: {val_metrics.get('cluster_accuracy', 0.0):.4f}")
+        print(f"  - Intra-cluster sim: {val_metrics.get('intra_cluster_similarity', 0.0):.4f}")
+        print(f"  - Inter-cluster sim: {val_metrics.get('inter_cluster_similarity', 0.0):.4f}")
+        print(f"  - Separation: {val_metrics.get('cluster_separation', 0.0):.4f}")
+        print(f"  - Silhouette: {val_metrics.get('silhouette_score', 0.0):.4f}")
         
         if config.use_wandb:
             wandb.log({
                 "epoch": epoch + 1,
+                "train/epoch_loss": train_losses['total_loss'],
+                "train/epoch_circle_loss": train_losses['circle_loss'],
+                "train/epoch_contrastive_loss": train_losses['contrastive_loss'],
                 "val/total_loss": val_metrics.get("total_loss", 0.0),
                 "val/circle_loss": val_metrics.get("circle_loss", 0.0),
                 "val/contrastive_loss": val_metrics.get("contrastive_loss", 0.0),
@@ -455,12 +585,19 @@ def main():
                 "projection_head_state_dict": projection_head.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
                 "config": config.__dict__,
-                "val_metrics": val_metrics
+                "val_metrics": val_metrics,
+                "train_losses": train_losses
             }
-            torch.save(checkpoint, os.path.join(config.output_dir, "best_model.pt"))
-            print(f"Saved best model (val_loss: {val_loss:.4f})")
+            output_dir = os.path.join(config.output_dir, "intent_embedder")
+            os.makedirs(output_dir, exist_ok=True)
+            torch.save(checkpoint, os.path.join(output_dir, "best_model.pt"))
+            print(f"\n✓ Saved best model (val_loss: {val_loss:.4f})")
     
-    print("\nTraining complete!")
+    print(f"\n{'='*60}")
+    print("Training complete!")
+    print(f"Best validation loss: {best_val_loss:.4f}")
+    print(f"{'='*60}")
+    
     if config.use_wandb:
         wandb.finish()
 

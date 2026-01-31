@@ -27,7 +27,7 @@ class ToolInvocationGenerator:
     Can output in Python-style or JSON format.
     """
 
-    def __init__(self, config: DataGeneratorConfig = None, output_format: OutputFormat = OutputFormat.JSON):
+    def __init__(self, config: DataGeneratorConfig = None, output_format: OutputFormat = OutputFormat.PYTHON):
         """
         Args:
             config: Configuration for data generation
@@ -95,11 +95,29 @@ class ToolInvocationGenerator:
             "cloud infrastructure", "serverless computing", "edge computing",
             "IoT devices", "robotics", "augmented reality", "virtual reality",
             "game development", "UI/UX design", "frontend frameworks",
-            "backend architecture", "distributed systems", "system design patterns"
+            "backend architecture", "distributed systems", "system design patterns",
+            "LLM safety", "prompt engineering", "retrieval augmented generation",
+            "vector databases", "GPU benchmarks", "open source licenses",
+            "data privacy regulations", "API rate limiting", "load testing",
+            "time series forecasting", "reinforcement learning", "graph neural networks"
+        ]
+        qualifiers = [
+            "tutorial", "guide", "overview", "best practices",
+            "benchmarks", "examples", "latest", "2024", "2025",
+            "beginner", "advanced", "research", "survey"
         ]
 
         topic = random.choice(topics)
-        max_results = random.randint(self.config.min_max_results, self.config.max_max_results)
+        if random.random() < 0.35:
+            topic = f"{topic} {random.choice(qualifiers)}"
+        elif random.random() < 0.2:
+            topic = f"\"{topic}\" {random.choice(qualifiers)}"
+        elif random.random() < 0.2:
+            topic = f"{topic} AND {random.choice(topics)}"
+
+        preferred_results = [3, 5, 8, 10, 12, 15, 20, 25, 50]
+        max_results = random.choice(preferred_results)
+        max_results = max(self.config.min_max_results, min(max_results, self.config.max_max_results))
 
         arguments = {
             "query": topic,
@@ -138,6 +156,13 @@ class ToolInvocationGenerator:
             f"ceil({random.uniform(1, 100):.2f})",
             f"floor({random.uniform(1, 100):.2f})",
             f"round({random.uniform(1, 100):.2f})",
+            f"{random.randint(1, 100)} % {random.randint(2, 11)}",
+            f"({random.randint(1, 20)} / {random.randint(1, 20)}) + ({random.randint(1, 20)} / {random.randint(1, 20)})",
+            f"pow({random.randint(2, 9)}, 2) + pow({random.randint(2, 9)}, 2)",
+            f"({random.randint(1, 20)} + {random.randint(1, 20)}) / {random.randint(2, 9)}",
+            f"abs({random.randint(-100, 100)}) + abs({random.randint(-100, 100)})",
+            f"round({random.uniform(0, 1000):.3f}, 2)",
+            f"floor({random.uniform(0, 1000):.2f}) - ceil({random.uniform(0, 1000):.2f})",
             "2 + 2", "10 * 5", "sqrt(144)", "sin(pi/2)", "cos(0)",
             "tan(pi/4)", "log(100)", "ln(e)", "2^10", "(5 + 3) * 2",
             "(10 - 4) / 2", "abs(-42)", "ceil(3.7)", "floor(3.7)", "round(3.14159)"
@@ -166,6 +191,11 @@ class ToolInvocationGenerator:
             f"SELECT {', '.join(random.sample(columns, random.randint(1, 2)))} FROM {random.choice(tables)} ORDER BY {random.choice(columns)} DESC LIMIT {random.randint(10, 100)}",
             f"SELECT AVG({random.choice(['amount', 'price', 'quantity', 'total'])}) FROM {random.choice(tables)}",
             f"SELECT SUM({random.choice(['amount', 'price', 'quantity', 'total'])}) FROM {random.choice(tables)}",
+            f"SELECT * FROM {random.choice(tables)} WHERE {random.choice(columns)} = '{self.faker.word()}' LIMIT {random.randint(5, 50)}",
+            f"SELECT * FROM {random.choice(tables)} WHERE {random.choice(columns)} BETWEEN {random.randint(1, 100)} AND {random.randint(101, 500)}",
+            f"SELECT {random.choice(columns)}, COUNT(*) FROM {random.choice(tables)} GROUP BY {random.choice(columns)} LIMIT {random.randint(5, 50)}",
+            f"SELECT * FROM {random.choice(tables)} WHERE created_at BETWEEN '2024-01-01' AND '2024-12-31' LIMIT {random.randint(10, 100)}",
+            f"SELECT * FROM {random.choice(tables)} WHERE status IN ('active', 'pending') LIMIT {random.randint(10, 100)}",
         ]
 
         sql = random.choice(query_types)
@@ -201,7 +231,9 @@ class ToolInvocationGenerator:
             "I'm writing to confirm the details we discussed earlier today.",
             "Could you please provide an update on the status of this item?",
             "I wanted to reach out regarding the proposal we discussed last week.",
-            "Please let me know if you have any questions or concerns about this matter."
+            "Please let me know if you have any questions or concerns about this matter.",
+            "Sharing a quick update and next steps. Please reply with any blockers.",
+            "Here is the summary from today. Let me know if anything looks off."
         ]
         body = random.choice(body_templates)
 
@@ -230,11 +262,15 @@ class ToolInvocationGenerator:
             "https://api.example.com/v1/users", "https://api.example.com/v1/products",
             "https://api.example.com/v1/orders", "https://httpbin.org/get",
             "https://httpbin.org/post", "https://httpbin.org/json",
-            "https://api.openweathermap.org/data/2.5/weather", "https://api.spotify.com/v1/albums"
+            "https://api.openweathermap.org/data/2.5/weather", "https://api.spotify.com/v1/albums",
+            "https://api.github.com/search/repositories", "https://jsonplaceholder.typicode.com/todos",
+            "https://api.example.com/v2/metrics", "https://httpbin.org/anything"
         ]
 
         method = "POST" if random.random() < 0.2 else "GET"
         url = random.choice(urls)
+        if random.random() < 0.3:
+            url += f"?q={self.faker.word()}&limit={random.randint(1, 50)}"
 
         return self._format_tool_call("web_fetch", {"url": url, "method": method})
 
@@ -250,7 +286,8 @@ class ToolInvocationGenerator:
             "data/training_data.csv", "data/validation_data.csv",
             "logs/application.log", "logs/error.log", "logs/debug.log",
             "/tmp/temp_file.txt", "/tmp/cache/data.bin", "./output/results.json",
-            "./output/analysis.csv", "../shared/config.yaml", "../shared/secrets.env"
+            "./output/analysis.csv", "../shared/config.yaml", "../shared/secrets.env",
+            "./data/notes.txt", "./data/exports/report_2024.csv", "./logs/train_intent.log"
         ]
 
         path = random.choice(paths)
@@ -341,11 +378,11 @@ class ToolInvocationGenerator:
 
 class NaturalLanguageToolCallGenerator:
     """
-    Generates (natural_language_query, tool_call) pairs for LLM training.
-    This is used in Phase 2 to train the LLM to predict tool embeddings.
+    Generates (natural_language_query, tool_call) pairs for cluster retrieval training.
+    This is used in Phase 2 to train the query encoder to retrieve clusters.
     """
     
-    def __init__(self, output_format: OutputFormat = OutputFormat.JSON):
+    def __init__(self, output_format: OutputFormat = OutputFormat.PYTHON):
         """
         Args:
             output_format: Format for tool call output
@@ -359,17 +396,32 @@ class NaturalLanguageToolCallGenerator:
     def _format_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """Format tool call using the parent generator's method."""
         return self.tool_generator._format_tool_call(tool_name, arguments)
+
+    def _make_pair(self, nl_query: str, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a consistent pair record with both string and dict tool calls."""
+        return {
+            "query": nl_query,
+            "tool_call": self._format_tool_call(tool_name, arguments),
+            "tool_call_dict": {"tool": tool_name, "arguments": arguments},
+            "tool": tool_name
+        }
     
-    def generate_search_pair(self) -> Dict[str, str]:
+    def generate_search_pair(self) -> Dict[str, Any]:
         """Generate NL query and corresponding search tool call."""
         topics = [
             "machine learning", "quantum computing", "AI papers",
             "Python tutorials", "climate change", "renewable energy",
             "neural networks", "NLP", "deep learning", "data science"
         ]
+        qualifiers = [
+            "tutorials", "best practices", "examples", "benchmarks",
+            "latest", "survey", "overview", "beginner guide"
+        ]
         
         topic = random.choice(topics)
         max_results = random.randint(5, 50)
+        if random.random() < 0.35:
+            topic = f"{topic} {random.choice(qualifiers)}"
         
         # Various ways users might phrase the request
         query_templates = [
@@ -381,6 +433,10 @@ class NaturalLanguageToolCallGenerator:
             f"Can you search for {topic}? I want {max_results} results maximum",
             f"Help me find articles about {topic}, {max_results} results please",
             f"Query {topic} and get {max_results} results",
+            f"Please search {topic} and return {max_results} links",
+            f"Find sources on {topic} (limit {max_results})",
+            f"Search the web for {topic}; cap results at {max_results}",
+            f"Get me {max_results} results for {topic}"
         ]
         
         nl_query = random.choice(query_templates)
@@ -402,13 +458,9 @@ class NaturalLanguageToolCallGenerator:
             ]
             nl_query += random.choice(date_phrases)
         
-        return {
-            "query": nl_query,
-            "tool_call": self._format_tool_call("search", arguments),
-            "tool": "search"
-        }
+        return self._make_pair(nl_query, "search", arguments)
     
-    def generate_calculate_pair(self) -> Dict[str, str]:
+    def generate_calculate_pair(self) -> Dict[str, Any]:
         """Generate NL query and corresponding calculate tool call."""
         # Generate various math problems with NL descriptions
         problems = [
@@ -427,6 +479,11 @@ class NaturalLanguageToolCallGenerator:
             ("What is the ceiling of 3.2?", "ceil(3.2)"),
             ("Calculate 15 squared", "15 ** 2"),
             ("What is cosine of 0?", "cos(0)"),
+            ("Compute 19 modulo 4", "19 % 4"),
+            ("Square root of 1024", "sqrt(1024)"),
+            ("What's 12.5% of 260?", "260 * 0.125"),
+            ("Evaluate (8 + 6) / 7", "(8 + 6) / 7"),
+            ("Round 12.987 to two decimals", "round(12.987, 2)"),
         ]
         
         # Add dynamic problems
@@ -436,18 +493,16 @@ class NaturalLanguageToolCallGenerator:
             (f"Calculate {a} times {b}", f"{a} * {b}"),
             (f"What's {a} divided by {max(1, b//10)}?", f"{a} / {max(1, b//10)}"),
             (f"Compute {a} minus {b}", f"{a} - {b}"),
+            (f"What's {a} to the power of 2?", f"{a} ** 2"),
+            (f"Compute {a} modulo {max(2, b//5)}", f"{a} % {max(2, b//5)}"),
         ]
         
         all_problems = problems + dynamic_problems
         nl_query, expression = random.choice(all_problems)
         
-        return {
-            "query": nl_query,
-            "tool_call": self._format_tool_call("calculate", {"expression": expression}),
-            "tool": "calculate"
-        }
+        return self._make_pair(nl_query, "calculate", {"expression": expression})
     
-    def generate_database_query_pair(self) -> Dict[str, str]:
+    def generate_database_query_pair(self) -> Dict[str, Any]:
         """Generate NL query and corresponding database_query tool call."""
         # Various database query scenarios
         scenarios = [
@@ -491,6 +546,18 @@ class NaturalLanguageToolCallGenerator:
                 "nl": "List recent transactions over $1000",
                 "sql": "SELECT * FROM transactions WHERE amount > 1000 ORDER BY created_at DESC LIMIT 20",
             },
+            {
+                "nl": "Show all users created this year",
+                "sql": "SELECT * FROM users WHERE created_at >= '2024-01-01' LIMIT 200",
+            },
+            {
+                "nl": "Count orders by status",
+                "sql": "SELECT status, COUNT(*) FROM orders GROUP BY status",
+            },
+            {
+                "nl": "Top 10 customers by revenue",
+                "sql": "SELECT customer_id, SUM(amount) AS revenue FROM transactions GROUP BY customer_id ORDER BY revenue DESC LIMIT 10",
+            },
         ]
         
         scenario = random.choice(scenarios)
@@ -501,16 +568,13 @@ class NaturalLanguageToolCallGenerator:
         if random.random() < 0.3:
             nl_query += f" (timeout: {timeout}s)"
         
-        return {
-            "query": nl_query,
-            "tool_call": self._format_tool_call("database_query", {
-                "sql": scenario["sql"],
-                "timeout": timeout
-            }),
-            "tool": "database_query"
-        }
+        return self._make_pair(
+            nl_query,
+            "database_query",
+            {"sql": scenario["sql"], "timeout": timeout}
+        )
     
-    def generate_send_email_pair(self) -> Dict[str, str]:
+    def generate_send_email_pair(self) -> Dict[str, Any]:
         """Generate NL query and corresponding send_email tool call."""
         email = self.faker.email()
         
@@ -540,6 +604,16 @@ class NaturalLanguageToolCallGenerator:
                 "subject": "Feedback Request - Proposal",
                 "body": "Please review the attached proposal and provide your feedback by end of week."
             },
+            {
+                "nl": f"Send {email} a quick status update",
+                "subject": "Status Update",
+                "body": "Quick update: work is on track. Next check-in is Friday."
+            },
+            {
+                "nl": f"Email {email} to reschedule our call",
+                "subject": "Reschedule Call",
+                "body": "Can we move our call to later this week? Let me know your availability."
+            },
         ]
         
         scenario = random.choice(scenarios)
@@ -555,13 +629,9 @@ class NaturalLanguageToolCallGenerator:
             cc_email = self.faker.email()
             arguments["cc"] = [cc_email]
         
-        return {
-            "query": scenario["nl"],
-            "tool_call": self._format_tool_call("send_email", arguments),
-            "tool": "send_email"
-        }
+        return self._make_pair(scenario["nl"], "send_email", arguments)
     
-    def generate_web_fetch_pair(self) -> Dict[str, str]:
+    def generate_web_fetch_pair(self) -> Dict[str, Any]:
         """Generate NL query and corresponding web_fetch tool call."""
         scenarios = [
             ("Fetch the GitHub users API", "https://api.github.com/users", "GET"),
@@ -572,17 +642,15 @@ class NaturalLanguageToolCallGenerator:
             ("Fetch the latest GitHub issues", "https://api.github.com/issues", "GET"),
             ("Get comments from JSONPlaceholder", "https://jsonplaceholder.typicode.com/comments", "GET"),
             ("Send data to the analytics endpoint", "https://api.example.com/analytics", "POST"),
+            ("Fetch repository search results", "https://api.github.com/search/repositories?q=nlp&per_page=5", "GET"),
+            ("Post a payload to httpbin", "https://httpbin.org/post", "POST"),
         ]
         
         nl_query, url, method = random.choice(scenarios)
         
-        return {
-            "query": nl_query,
-            "tool_call": self._format_tool_call("web_fetch", {"url": url, "method": method}),
-            "tool": "web_fetch"
-        }
+        return self._make_pair(nl_query, "web_fetch", {"url": url, "method": method})
     
-    def generate_file_read_pair(self) -> Dict[str, str]:
+    def generate_file_read_pair(self) -> Dict[str, Any]:
         """Generate NL query and corresponding file_read tool call."""
         scenarios = [
             ("Read the config file", "./config.json", "utf-8"),
@@ -594,17 +662,15 @@ class NaturalLanguageToolCallGenerator:
             ("Read the test suite", "./tests/test_suite.py", "utf-8"),
             ("Get the dataset JSON", "data/dataset.json", "utf-8"),
             ("Read the error log with latin-1 encoding", "logs/error.log", "latin-1"),
+            ("Open the training log", "logs/train_intent.log", "utf-8"),
+            ("Read the exports report", "./data/exports/report_2024.csv", "utf-8"),
         ]
         
         nl_query, path, encoding = random.choice(scenarios)
         
-        return {
-            "query": nl_query,
-            "tool_call": self._format_tool_call("file_read", {"path": path, "encoding": encoding}),
-            "tool": "file_read"
-        }
+        return self._make_pair(nl_query, "file_read", {"path": path, "encoding": encoding})
     
-    def generate_pair(self, tool_name: str = None) -> Dict[str, str]:
+    def generate_pair(self, tool_name: str = None) -> Dict[str, Any]:
         """Generate a random (NL query, tool call) pair."""
         generators = {
             "search": self.generate_search_pair,
@@ -620,7 +686,7 @@ class NaturalLanguageToolCallGenerator:
         
         return generators[tool_name]()
     
-    def generate_dataset(self, num_samples: int) -> List[Dict[str, str]]:
+    def generate_dataset(self, num_samples: int) -> List[Dict[str, Any]]:
         """Generate a balanced dataset of (NL query, tool call) pairs."""
         tools = list(["search", "calculate", "database_query", "send_email", "web_fetch", "file_read"])
         samples_per_tool = num_samples // len(tools)
@@ -635,13 +701,13 @@ class NaturalLanguageToolCallGenerator:
         random.shuffle(dataset)
         return dataset
     
-    def save_dataset(self, dataset: List[Dict[str, str]], filepath: str):
+    def save_dataset(self, dataset: List[Dict[str, Any]], filepath: str):
         """Save dataset to JSONL file."""
         with open(filepath, 'w') as f:
             for item in dataset:
                 f.write(json.dumps(item, ensure_ascii=False) + '\n')
     
-    def load_dataset(self, filepath: str) -> List[Dict[str, str]]:
+    def load_dataset(self, filepath: str) -> List[Dict[str, Any]]:
         """Load dataset from JSONL file."""
         dataset = []
         with open(filepath, 'r') as f:
