@@ -15,3 +15,5 @@ plotly
 tqdm
 beautifulsoup4
 playwright
+sentencepiece
+accelerate

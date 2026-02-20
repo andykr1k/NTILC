@@ -77,3 +77,5 @@ analysis/
 *.tmp
 *.temp
 *.log
+
+.env

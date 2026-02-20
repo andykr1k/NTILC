@@ -460,19 +460,22 @@ def demo():
     )
 
     queries = [
-        # "Find papers about contrastive learning, 5 results",
-        # "What is 25 plus 37?",
-        # "Get the last 10 orders from California",
-        # "Send an email to test@example.com about the meeting",
-        # "Fetch data from the GitHub API"
+        "Find papers about contrastive learning, 5 results",
+        "What is 25 plus 37?",
+        "Get the last 10 orders from California",
+        "Send an email to test@example.com about the meeting",
+        "Fetch data from the GitHub API",
+        "Calculate the square root of 256",
+        "Send a message to John saying happy birthday",
+        "Read the file /path/to/data.csv",
     ]
 
     for q in queries:
         result = system.predict(q, return_timings=True)
         print(f"\nQuery: {q}")
         print(f"Tool: {result.tool_name} (cluster {result.cluster_id}, conf {result.confidence:.2f})")
-        print(f"Arguments: {result.arguments}")
-        print(f"Tool call: {result.tool_call}")
+        # print(f"Arguments: {result.arguments}")
+        # print(f"Tool call: {result.tool_call}")
         if result.timings_ms:
             print("Timings (ms):")
             for key, value in result.timings_ms.items():
