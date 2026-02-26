@@ -3,6 +3,7 @@ transformers
 tokenizers
 datasets
 wandb
+streamlit
 faker
 pandas
 numpy
@@ -17,3 +18,4 @@ beautifulsoup4
 playwright
 sentencepiece
 accelerate
+PyYAML
