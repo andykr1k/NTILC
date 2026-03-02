@@ -17,27 +17,10 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-
 import torch
 from torch.utils.data import Dataset
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    Trainer,
-    TrainingArguments,
-)
-
-try:
-    from peft import (
-        LoraConfig,
-        get_peft_model,
-        prepare_model_for_kbit_training,
-    )
-except ImportError as exc:
-    raise ImportError(
-        "Missing `peft`. Install with: pip install peft"
-    ) from exc
-
+from transformers import AutoModelForCausalLM,  AutoTokenizer, Trainer,TrainingArguments
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
 def load_rows(path: Path) -> List[Dict[str, Any]]:
     if path.suffix.lower() == ".jsonl":
@@ -111,6 +94,8 @@ def split_command_tail(tool: str, command: str) -> str:
         if parts[0] == tool:
             return "<NO_ARGS>"
         return command
+    # Only strip the tool prefix if the first token exactly matches the tool name.
+    # Commands like `sudo git push` won't match and are returned as-is.
     if parts[0] == tool:
         return parts[1].strip()
     return command
@@ -172,21 +157,20 @@ class CommandSFTDataset(Dataset):
             if not target_ids:
                 continue
 
+            # Always ensure the full target fits; truncate prompt from the front if needed.
+            if len(target_ids) > max_seq_len:
+                # Target itself exceeds max_seq_len; skip this sample.
+                continue
+
+            max_prompt_len = max_seq_len - len(target_ids)
+            if len(prompt_ids) > max_prompt_len:
+                # Truncate prompt from the front, keeping the most recent context.
+                prompt_ids = prompt_ids[-max_prompt_len:]
+
             input_ids = prompt_ids + target_ids
             labels = ([-100] * len(prompt_ids)) + target_ids
-
-            if len(input_ids) > max_seq_len:
-                overflow = len(input_ids) - max_seq_len
-                if overflow < len(prompt_ids):
-                    prompt_ids = prompt_ids[overflow:]
-                    input_ids = prompt_ids + target_ids
-                    labels = ([-100] * len(prompt_ids)) + target_ids
-                else:
-                    # Keep the end if prompt is too long.
-                    input_ids = input_ids[-max_seq_len:]
-                    labels = labels[-max_seq_len:]
-
             attention_mask = [1] * len(input_ids)
+
             self.samples.append(
                 TokenizedSample(
                     input_ids=input_ids,
@@ -238,6 +222,9 @@ def split_train_val(
     rng = random.Random(seed)
     rng.shuffle(rows)
     n_val = max(1, int(len(rows) * val_ratio))
+    # Guard: ensure at least 1 training row remains after splitting.
+    if n_val >= len(rows):
+        n_val = max(0, len(rows) - 1)
     val_rows = rows[:n_val]
     train_rows = rows[n_val:]
     return train_rows, val_rows
@@ -353,6 +340,9 @@ def main() -> None:
             seed=args.seed,
         )
 
+    if not train_rows:
+        raise ValueError("No training rows remain after train/val split.")
+
     if is_main_process:
         print(f"Train rows: {len(train_rows)}")
         print(f"Val rows:   {len(val_rows)}")
@@ -363,7 +353,6 @@ def main() -> None:
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    quantization_config = None
     model_kwargs: Dict[str, Any] = {"trust_remote_code": True}
     if distributed and args.use_4bit:
         raise ValueError(
@@ -389,15 +378,18 @@ def main() -> None:
             model_kwargs["device_map"] = "auto"
     else:
         model_kwargs["torch_dtype"] = torch.bfloat16 if torch.cuda.is_available() else torch.float32
-        if torch.cuda.is_available():
-            if not distributed:
-                model_kwargs["device_map"] = "auto"
+        if torch.cuda.is_available() and not distributed:
+            model_kwargs["device_map"] = "auto"
 
     model = AutoModelForCausalLM.from_pretrained(args.model_name, **model_kwargs)
     model.config.use_cache = False
 
     if args.use_4bit:
         model = prepare_model_for_kbit_training(model)
+
+    # Enable gradient checkpointing to reduce VRAM usage before wrapping with PEFT.
+    if torch.cuda.is_available():
+        model.gradient_checkpointing_enable()
 
     target_modules = [m.strip() for m in args.target_modules.split(",") if m.strip()]
     peft_config = LoraConfig(
@@ -452,10 +444,14 @@ def main() -> None:
         "remove_unused_columns": False,
         "dataloader_pin_memory": torch.cuda.is_available(),
         "seed": args.seed,
-        "ddp_find_unused_parameters": False if distributed else None,
         "save_on_each_node": False,
-        "local_rank": local_rank if distributed else -1,
     }
+
+    # Only pass ddp_find_unused_parameters when actually running distributed.
+    if distributed:
+        training_kwargs["ddp_find_unused_parameters"] = False
+        training_kwargs["local_rank"] = local_rank
+
     if has_eval_set:
         if "evaluation_strategy" in ta_params:
             training_kwargs["evaluation_strategy"] = "steps"
