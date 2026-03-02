@@ -15,10 +15,10 @@ class IntentEmbeddingConfig:
     # Model architecture
     intent_embedding_dim: int = 1024  # High-dimensional intent space
     projection_dim: int = 128  # Projected space for similarity
-    encoder_model: str = "google/flan-t5-base"
+    encoder_model: str = "Qwen/Qwen3.5-9B"
     pooling_strategy: str = "attention"
     max_length: int = 512  # Longer for intent descriptions
-    dropout: float = 0.5  # FIXED: Increased from 0.15 to prevent collapse
+    dropout: float = 0.15  # FIXED: Increased from 0.15 to prevent collapse
 
     # Freezing strategy
     freeze_encoder: bool = False
@@ -44,12 +44,8 @@ class IntentEmbeddingConfig:
     torch_dtype: str = "bfloat16"
     gradient_accumulation_steps: int = 2
 
-    # Data
-    num_train_samples: int = 25000
-    num_val_samples: int = 2500
-    num_test_samples: int = 2500
-    output_format: str = "python"
-    regenerate_data: bool = True
+    # Data (NL-command-pairs)
+    # Dataset paths/splits are controlled by training script arguments.
 
     # Loss configuration (NEW: Circle Loss with corrected defaults)
     use_circle_loss: bool = True
@@ -87,40 +83,12 @@ class IntentEmbeddingConfig:
     # Early stopping
     early_stopping_patience: int = 10
     early_stopping_min_delta: float = 0.001
-
-
-
-    # Early stopping
-    early_stopping_patience: int = 10
-    early_stopping_min_delta: float = 0.001
     
     # Scheduled sampling (teacher forcing decay)
     use_scheduled_sampling: bool = True
     scheduled_sampling_start: float = 1.0
     scheduled_sampling_end: float = 0.5
     scheduled_sampling_warmup: int = 3000
-
-
-@dataclass
-class DataGeneratorConfig:
-    """Configuration for synthetic data generation."""
-
-    tools: List[str] = field(default_factory=lambda: [
-        "search",
-        "calculate",
-        "database_query",
-        "send_email",
-        "web_fetch",
-        "file_read"
-    ])
-
-    min_query_length: int = 5
-    max_query_length: int = 50
-    min_max_results: int = 1
-    max_max_results: int = 100
-
-    format_style: str = "python"
-
 
 @dataclass
 class EvaluationConfig:

@@ -20,22 +20,22 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 # -----------------------------
 # Config
 # -----------------------------
-INPUT_PATH = "/scratch4/home/akrik/NTILC/data/man/raw.json"
+INPUT_PATH = "/scratch4/home/akrik/NTILC/data/man/raw_ai.json"
 OUTPUT_JSONL_PATH = "/scratch4/home/akrik/NTILC/data/man/nl_command_pairs.jsonl"
 OUTPUT_JSON_ARRAY_PATH = "/scratch4/home/akrik/NTILC/data/man/nl_command_pairs.json"
 
-MODEL_ID = "Qwen/Qwen3-30B-A3B-Instruct-2507"
+MODEL_ID = "Qwen/Qwen3.5-9B"
 
-GPU_IDS = [4, 5, 6, 7]
+GPU_IDS = [0,1,2,3,4,5,6]
 NUM_WORKERS = len(GPU_IDS)
 
 BATCH_SIZE = 16
-MAX_NEW_TOKENS = 1024
+MAX_NEW_TOKENS = 2048
 TEMPERATURE = 0.7
 TOP_P = 0.9
 DO_SAMPLE = True
 
-N_EXAMPLES = 10
+N_EXAMPLES = 25
 SEED = 42
 
 LOG_EVERY_SEC = 10
@@ -44,7 +44,7 @@ FLUSH_EVERY_N_LINES = 50
 
 SYSTEM = """You generate dataset examples for a tool-using assistant.
 
-Given ONE CLI tool record, produce EXACTLY 10 diverse examples.
+Given ONE CLI tool record, produce EXACTLY 25 diverse examples.
 
 Each example must be a pair:
 - nl_query: natural language user request (1 sentence)

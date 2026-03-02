@@ -7,7 +7,7 @@ Encodes natural language queries into 128-D embeddings for similarity search.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import AutoTokenizer, T5EncoderModel
+from transformers import AutoModel, AutoTokenizer
 
 
 class QueryEncoder(nn.Module):
@@ -15,14 +15,14 @@ class QueryEncoder(nn.Module):
 
     def __init__(
         self,
-        base_model: str = "google/flan-t5-base",
+        base_model: str = "Qwen/Qwen3.5-9B",
         output_dim: int = 128,
         dropout: float = 0.15,
         torch_dtype: str = "float32"
     ):
         super().__init__()
 
-        self.tokenizer = AutoTokenizer.from_pretrained(base_model)
+        self.tokenizer = AutoTokenizer.from_pretrained(base_model, trust_remote_code=True)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
@@ -34,9 +34,20 @@ class QueryEncoder(nn.Module):
         dtype = dtype_map.get(torch_dtype, torch.float32)
         self.dtype = dtype
 
-        self.encoder = T5EncoderModel.from_pretrained(base_model, torch_dtype=dtype)
+        self.encoder = AutoModel.from_pretrained(
+            base_model,
+            torch_dtype=dtype,
+            trust_remote_code=True,
+        )
         config = self.encoder.config
-        hidden_dim = config.d_model if hasattr(config, "d_model") else config.hidden_size
+        if hasattr(config, "d_model"):
+            hidden_dim = config.d_model
+        elif hasattr(config, "hidden_size"):
+            hidden_dim = config.hidden_size
+        elif hasattr(config, "n_embd"):
+            hidden_dim = config.n_embd
+        else:
+            raise ValueError(f"Could not determine hidden size for model: {base_model}")
 
         # Attention pooling
         self.attention_pool = nn.Sequential(

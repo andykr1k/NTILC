@@ -273,7 +273,8 @@ def per_tool_metrics(original: List[str], reconstructed: List[str]) -> Dict[str,
 def compute_cluster_metrics(
     embeddings: torch.Tensor,
     labels: torch.Tensor,
-    tool_calls: List[str] = None
+    tool_calls: List[str] = None,
+    tool_names: Optional[List[str]] = None,
 ) -> Dict[str, float]:
     """
     Compute cluster-based metrics for NEW ARCHITECTURE.
@@ -346,29 +347,41 @@ def compute_cluster_metrics(
     except:
         metrics["silhouette_score"] = 0.0
     
-    # Cluster accuracy (if tool_calls provided)
-    if tool_calls:
-        try:
-            from models.tool_schemas import TOOL_SCHEMAS
-            tool_names = list(TOOL_SCHEMAS.keys())
-
-            predicted_tools = []
-            for tc in tool_calls:
-                if isinstance(tc, dict):
-                    tool_name = tc.get("tool", "unknown")
-                else:
-                    tool_name = extract_tool_from_call(str(tc))
-
-                if tool_name in tool_names:
-                    predicted_tools.append(tool_names.index(tool_name))
-                else:
-                    predicted_tools.append(-1)
-
-            correct = sum(1 for pred, label in zip(predicted_tools, labels_np) if pred == label and pred != -1)
-            total = sum(1 for pred in predicted_tools if pred != -1)
-            metrics["cluster_accuracy"] = correct / total if total > 0 else 0.0
-        except ImportError:
+    # Cluster accuracy: nearest-centroid label recovery in embedding space.
+    # This is a geometry metric, independent of tool_call strings.
+    try:
+        unique_labels = np.unique(labels_np)
+        if len(unique_labels) == 0:
             metrics["cluster_accuracy"] = 0.0
+        elif len(unique_labels) == 1:
+            metrics["cluster_accuracy"] = 1.0
+        else:
+            centroid_labels: List[int] = []
+            centroids: List[np.ndarray] = []
+            for label in unique_labels:
+                label_mask = labels_np == label
+                if label_mask.sum() == 0:
+                    continue
+                centroid = embeddings_np[label_mask].mean(axis=0)
+                norm = np.linalg.norm(centroid)
+                if norm > 0:
+                    centroid = centroid / norm
+                centroids.append(centroid)
+                centroid_labels.append(int(label))
+
+            if not centroids:
+                metrics["cluster_accuracy"] = 0.0
+            else:
+                centroid_matrix = np.stack(centroids, axis=0)
+                sample_norms = np.linalg.norm(embeddings_np, axis=1, keepdims=True)
+                sample_norms[sample_norms == 0] = 1.0
+                normalized_samples = embeddings_np / sample_norms
+                similarities = normalized_samples @ centroid_matrix.T
+                pred_centroid_idx = similarities.argmax(axis=1)
+                pred_labels = np.array([centroid_labels[i] for i in pred_centroid_idx], dtype=labels_np.dtype)
+                metrics["cluster_accuracy"] = float((pred_labels == labels_np).mean())
+    except Exception:
+        metrics["cluster_accuracy"] = 0.0
     
     # Embedding statistics (convert back to torch for consistency)
     if isinstance(embeddings, torch.Tensor):
