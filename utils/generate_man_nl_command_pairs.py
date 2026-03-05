@@ -61,7 +61,7 @@ Rules:
   "examples": [
     {"nl_query": "...", "command": "..."},
     ...
-    (10 total)
+    (25 total)
   ]
 }
 """

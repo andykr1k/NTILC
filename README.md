@@ -131,6 +131,7 @@ Primary notebooks:
 
 - `notebooks/embedding_space_analysis_v2.ipynb`
 - `notebooks/retrieval_and_lora_analysis_v2.ipynb`
+- `notebooks/full_inference_pipeline.ipynb`
 
 Workflow notes:
 
@@ -218,6 +219,26 @@ for step in run.steps:
 - argument validation against schema
 - safety rule enforcement
 - optional permission checks
+- dispatch via `ToolDispatcher`
+
+Example mapper + dispatcher wiring:
+
+```python
+from models.software_layer import ClusterToolMapper, ToolDispatcher
+
+mapper = ClusterToolMapper.from_retrieval_checkpoint(
+    "checkpoints/cluster_retrieval/best_model.pt"
+)
+mapper.register_shell_tools_for_all_clusters(timeout_seconds=20, cwd=".")
+
+dispatcher = ToolDispatcher(mapper=mapper, fail_on_nonzero_exit=True)
+result = dispatcher.dispatch_cluster(
+    cluster_id=0,
+    arguments={"command": "ls -la"},
+    execute=False,  # dry-run
+)
+print(result.to_dict())
+```
 
 Example safety-rule formats:
 

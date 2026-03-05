@@ -94,7 +94,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--num-workers",
         type=int,
-        default=2,
+        default=1,
         help="Number of DataLoader workers per process.",
     )
     parser.add_argument(
@@ -102,6 +102,40 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=60,
         help="DDP process-group timeout in minutes.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="Override batch size from config.",
+    )
+    parser.add_argument(
+        "--gradient-accumulation-steps",
+        type=int,
+        default=None,
+        help="Override gradient accumulation steps from config.",
+    )
+    parser.add_argument(
+        "--max-length",
+        type=int,
+        default=256,
+        help="Tokenization max length for query encoder inputs.",
+    )
+    parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=None,
+        help="Override learning rate from config.",
+    )
+    parser.add_argument(
+        "--freeze-base-encoder",
+        action="store_true",
+        help="Freeze the base transformer and train only query heads.",
+    )
+    parser.add_argument(
+        "--train-base-encoder",
+        action="store_true",
+        help="Train the full base transformer (overrides --freeze-base-encoder).",
     )
     return parser.parse_args()
 
@@ -458,6 +492,12 @@ def main() -> None:
     if args.gpu_ids:
         os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_ids
     config = IntentEmbeddingConfig()
+    if args.batch_size is not None:
+        config.batch_size = args.batch_size
+    if args.gradient_accumulation_steps is not None:
+        config.gradient_accumulation_steps = args.gradient_accumulation_steps
+    if args.learning_rate is not None:
+        config.learning_rate = args.learning_rate
     if args.disable_wandb:
         config.use_wandb = False
 
@@ -482,8 +522,12 @@ def main() -> None:
 
         if is_main_process:
             print(f"Loading Phase 1 checkpoint: {checkpoint_path}")
-        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         ckpt_config = checkpoint.get("config", {})
+        intent_embedder_state_dict = checkpoint["intent_embedder_state_dict"]
+        projection_head_state_dict = checkpoint["projection_head_state_dict"]
+        phase1_tool_names = checkpoint.get("tool_names", [])
+        del checkpoint
 
         dtype_map = {"float16": torch.float16, "bfloat16": torch.bfloat16, "float32": torch.float32}
         model_torch_dtype = ckpt_config.get("torch_dtype", config.torch_dtype)
@@ -497,7 +541,7 @@ def main() -> None:
             torch_dtype=model_torch_dtype,
             max_length=ckpt_config.get("max_length", config.max_length),
         ).to(device)
-        intent_embedder.load_state_dict(checkpoint["intent_embedder_state_dict"])
+        intent_embedder.load_state_dict(intent_embedder_state_dict)
         for param in intent_embedder.parameters():
             param.requires_grad = False
         intent_embedder.eval()
@@ -507,10 +551,12 @@ def main() -> None:
             output_dim=ckpt_config.get("projection_dim", config.projection_dim),
             dropout=ckpt_config.get("dropout", config.dropout),
         ).to(device).to(use_dtype)
-        projection_head.load_state_dict(checkpoint["projection_head_state_dict"])
+        projection_head.load_state_dict(projection_head_state_dict)
         for param in projection_head.parameters():
             param.requires_grad = False
         projection_head.eval()
+        del intent_embedder_state_dict
+        del projection_head_state_dict
 
         if config.use_wandb and is_main_process:
             wandb.init(
@@ -538,7 +584,6 @@ def main() -> None:
             val_items = all_train_items[:n_val]
             train_items = all_train_items[n_val:]
 
-        phase1_tool_names = checkpoint.get("tool_names", [])
         tool_names = list(phase1_tool_names) if isinstance(phase1_tool_names, list) else []
         if not tool_names:
             tool_names = sorted(
@@ -583,7 +628,7 @@ def main() -> None:
             intent_embedder=intent_embedder,
             projection_head=projection_head,
             tokenizer=tokenizer,
-            max_length=256,
+            max_length=args.max_length,
         )
         val_dataset = QueryClusterDataset(
             queries=val_queries,
@@ -592,8 +637,11 @@ def main() -> None:
             intent_embedder=intent_embedder,
             projection_head=projection_head,
             tokenizer=tokenizer,
-            max_length=256,
+            max_length=args.max_length,
         )
+        del intent_embedder
+        del projection_head
+        torch.cuda.empty_cache()
 
         train_sampler = (
             DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True)
@@ -627,6 +675,24 @@ def main() -> None:
             dropout=ckpt_config.get("dropout", config.dropout),
             torch_dtype=model_torch_dtype,
         ).to(device).to(use_dtype)
+        freeze_base_encoder = args.freeze_base_encoder and not args.train_base_encoder
+        if freeze_base_encoder:
+            for param in query_encoder.encoder.parameters():
+                param.requires_grad = False
+            if is_main_process:
+                print("Froze base query encoder weights; training only pooling/projection heads.")
+
+        trainable_params = [p for p in query_encoder.parameters() if p.requires_grad]
+        if not trainable_params:
+            raise ValueError("No trainable parameters remain in query encoder.")
+        if is_main_process:
+            total_params = sum(p.numel() for p in query_encoder.parameters())
+            trainable_count = sum(p.numel() for p in trainable_params)
+            trainable_pct = 100.0 * trainable_count / max(1, total_params)
+            print(
+                f"Query encoder params: total={total_params:,}, "
+                f"trainable={trainable_count:,} ({trainable_pct:.2f}%)"
+            )
 
         if distributed:
             query_encoder = DDP(
@@ -634,6 +700,7 @@ def main() -> None:
                 device_ids=[local_rank],
                 output_device=local_rank,
                 find_unused_parameters=False,
+                gradient_as_bucket_view=True,
             )
 
         cluster_retrieval = ClusterRetrieval(
@@ -646,7 +713,7 @@ def main() -> None:
         cluster_centroids = cluster_retrieval.get_cluster_centroids()
 
         optimizer = torch.optim.AdamW(
-            query_encoder.parameters(),
+            trainable_params,
             lr=config.learning_rate,
             weight_decay=config.weight_decay,
         )

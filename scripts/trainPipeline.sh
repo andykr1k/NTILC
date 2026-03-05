@@ -1,16 +1,41 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "[1/4] Cleaning NL-command pairs"
-bash scripts/cleanPairs.sh
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 
-echo "[2/4] Training intent embeddings (Phase 1)"
-bash scripts/trainIE.sh
+LOG_DIR="logs/main"
+mkdir -p "$LOG_DIR"
 
-echo "[3/4] Training cluster retrieval (Phase 2)"
-bash scripts/trainCR.sh
+timestamp=$(date +"%Y%m%d_%H%M%S")
 
-echo "[4/4] Training LoRA command model"
-bash scripts/trainLora.sh
+run_step () {
+    local name="$1"
+    shift
 
+    log_file="${LOG_DIR}/${timestamp}_${name}.log"
+
+    echo
+    echo "=== Running: ${name} ==="
+    echo "Log: ${log_file}"
+    echo
+
+    "$@" 2>&1 | tee "$log_file"
+}
+
+run_step "generate_pairs" \
+    python -m utils.generate_man_nl_command_pairs
+
+run_step "clean_pairs" \
+    bash scripts/cleanPairs.sh
+
+run_step "train_intent_embeddings" \
+    bash scripts/trainIE.sh
+
+run_step "train_cluster_retrieval" \
+    bash scripts/trainCR.sh
+
+run_step "train_lora" \
+    bash scripts/trainLora.sh
+
+echo
 echo "Pipeline complete."

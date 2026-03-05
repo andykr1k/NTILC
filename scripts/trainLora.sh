@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Edit this line to choose GPUs.
-GPU_IDS="0,1,2,3,4,5,6,7"
+GPU_IDS="0,1,2,3"
 IFS=',' read -r -a _gpu_array <<< "${GPU_IDS}"
 NPROC_PER_NODE="${#_gpu_array[@]}"
 export CUDA_VISIBLE_DEVICES="${GPU_IDS}"

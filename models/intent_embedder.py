@@ -80,6 +80,10 @@ class ToolIntentEmbedder(nn.Module):
         # FIX: Enable gradient checkpointing to save activation memory for large models
         if hasattr(self.transformer, "gradient_checkpointing_enable"):
             self.transformer.gradient_checkpointing_enable()
+        # Avoid repeated runtime warnings and KV-cache overhead during training.
+        transformer_config = getattr(self.transformer, "config", None)
+        if transformer_config is not None and hasattr(transformer_config, "use_cache"):
+            transformer_config.use_cache = False
 
         # Apply freezing strategy
         if freeze_base:

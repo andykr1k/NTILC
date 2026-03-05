@@ -7,6 +7,7 @@ Encodes natural language queries into 128-D embeddings for similarity search.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Any, Optional
 from transformers import AutoModel, AutoTokenizer
 
 
@@ -40,14 +41,7 @@ class QueryEncoder(nn.Module):
             trust_remote_code=True,
         )
         config = self.encoder.config
-        if hasattr(config, "d_model"):
-            hidden_dim = config.d_model
-        elif hasattr(config, "hidden_size"):
-            hidden_dim = config.hidden_size
-        elif hasattr(config, "n_embd"):
-            hidden_dim = config.n_embd
-        else:
-            raise ValueError(f"Could not determine hidden size for model: {base_model}")
+        hidden_dim = self._infer_hidden_dim(config, base_model)
 
         # Attention pooling
         self.attention_pool = nn.Sequential(
@@ -68,6 +62,77 @@ class QueryEncoder(nn.Module):
         )
         self.attention_pool = self.attention_pool.to(dtype)
         self.projection = self.projection.to(dtype)
+
+    def _candidate_backbones(self):
+        """Return likely transformer backbone modules, deduplicated."""
+        modules = [self.encoder]
+        for attr in ("language_model", "model", "transformer", "text_model", "backbone"):
+            module = getattr(self.encoder, attr, None)
+            if isinstance(module, nn.Module):
+                modules.append(module)
+
+        seen = set()
+        unique_modules = []
+        for module in modules:
+            module_id = id(module)
+            if module_id not in seen:
+                seen.add(module_id)
+                unique_modules.append(module)
+        return unique_modules
+
+    def _infer_hidden_dim(self, config: Any, model_name: str) -> int:
+        """Infer hidden dimension from model config, including nested layouts."""
+        def _search_obj(obj: Any) -> Optional[int]:
+            for attr in ("hidden_size", "d_model", "n_embd"):
+                dim = getattr(obj, attr, None)
+                if isinstance(dim, int) and dim > 0:
+                    return dim
+            return None
+
+        def _search_dict(data: dict) -> Optional[int]:
+            for attr in ("hidden_size", "d_model", "n_embd"):
+                dim = data.get(attr)
+                if isinstance(dim, int) and dim > 0:
+                    return dim
+            return None
+
+        dim = _search_obj(config)
+        if dim:
+            return dim
+
+        for nested_attr in ("text_config", "language_config", "llm_config",
+                            "model_config", "decoder", "encoder"):
+            nested = getattr(config, nested_attr, None)
+            if nested is not None:
+                dim = _search_obj(nested)
+                if dim:
+                    return dim
+
+        if hasattr(config, "to_dict"):
+            config_dict = config.to_dict()
+            dim = _search_dict(config_dict)
+            if dim:
+                return dim
+            for nested_attr in ("text_config", "language_config", "llm_config",
+                                "model_config", "decoder", "encoder"):
+                nested_dict = config_dict.get(nested_attr)
+                if isinstance(nested_dict, dict):
+                    dim = _search_dict(nested_dict)
+                    if dim:
+                        return dim
+
+        for backbone in self._candidate_backbones():
+            backbone_config = getattr(backbone, "config", None)
+            if backbone_config is not None:
+                dim = _search_obj(backbone_config)
+                if dim:
+                    return dim
+            for embed_attr in ("embed_tokens", "wte"):
+                embed = getattr(backbone, embed_attr, None)
+                if embed is not None and hasattr(embed, "weight"):
+                    return int(embed.weight.shape[-1])
+
+        raise ValueError(f"Could not determine hidden size for model: {model_name}")
 
     def forward(self, input_ids, attention_mask):
         """Encode query to output_dim embedding."""

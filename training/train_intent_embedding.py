@@ -25,6 +25,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, Dataset, DistributedSampler
 import os
 import random
+import time
 from datetime import timedelta
 
 from models.intent_embedder import ToolIntentEmbedder
@@ -176,8 +177,81 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--num-workers",
         type=int,
-        default=2,
+        default=1,
         help="Number of DataLoader workers per process.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="Override per-GPU batch size.",
+    )
+    parser.add_argument(
+        "--gradient-accumulation-steps",
+        type=int,
+        default=None,
+        help="Override gradient accumulation steps.",
+    )
+    parser.add_argument(
+        "--max-length",
+        type=int,
+        default=None,
+        help="Override tokenizer max length.",
+    )
+    parser.add_argument(
+        "--num-epochs",
+        type=int,
+        default=None,
+        help="Override number of training epochs.",
+    )
+    parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=None,
+        help="Override learning rate.",
+    )
+    parser.add_argument(
+        "--warmup-steps",
+        type=int,
+        default=None,
+        help="Override warmup steps.",
+    )
+    parser.add_argument(
+        "--warmup-ratio",
+        type=float,
+        default=None,
+        help="Override warmup ratio when warmup-steps is not set.",
+    )
+    parser.add_argument(
+        "--freeze-encoder",
+        action="store_true",
+        help="Freeze the full base encoder.",
+    )
+    parser.add_argument(
+        "--freeze-encoder-layers",
+        type=int,
+        default=None,
+        help="Override number of early encoder layers to freeze.",
+    )
+    parser.add_argument(
+        "--embedding-noise-std",
+        type=float,
+        default=None,
+        help="Override embedding noise std.",
+    )
+    parser.add_argument(
+        "--pooling-strategy",
+        type=str,
+        choices=["mean", "cls", "max", "attention"],
+        default=None,
+        help="Override pooling strategy.",
+    )
+    parser.add_argument(
+        "--torch-dtype",
+        type=str,
+        choices=["float16", "bfloat16", "float32"],
+        default=None,
+        help="Override model dtype.",
     )
     parser.add_argument(
         "--ddp-timeout-minutes",
@@ -344,6 +418,7 @@ def train_epoch(
     
     optimizer.zero_grad(set_to_none=True)
     for batch_idx, batch in enumerate(progress_bar):
+        batch_start = time.perf_counter()
         tool_calls = [item["tool_call"] for item in batch]
         queries = [item["query"] for item in batch]
         labels = torch.tensor([item["label"] for item in batch], device=device)
@@ -405,6 +480,12 @@ def train_epoch(
         num_batches += 1
         
         current_step = global_step + batch_idx
+        batch_time_sec = time.perf_counter() - batch_start
+        if batch_time_sec > 120 and is_main_process:
+            print(
+                f"[warn] Slow batch detected: epoch={epoch + 1} "
+                f"batch={batch_idx + 1}/{len(dataloader)} time={batch_time_sec:.1f}s"
+            )
         
         # Update progress bar and log
         if current_step % config.log_interval == 0:
@@ -412,7 +493,8 @@ def train_epoch(
             progress_bar.set_postfix({
                 "loss": f"{avg_loss:.4f}",
                 "circle": f"{circle_loss.item():.4f}",
-                "contrastive": f"{contrastive_loss.item():.4f}"
+                "contrastive": f"{contrastive_loss.item():.4f}",
+                "bt(s)": f"{batch_time_sec:.1f}",
             })
             
             if config.use_wandb and is_main_process:
@@ -614,6 +696,30 @@ def main():
     if args.gpu_ids:
         os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_ids
     config = IntentEmbeddingConfig()
+    if args.batch_size is not None:
+        config.batch_size = args.batch_size
+    if args.gradient_accumulation_steps is not None:
+        config.gradient_accumulation_steps = args.gradient_accumulation_steps
+    if args.max_length is not None:
+        config.max_length = args.max_length
+    if args.num_epochs is not None:
+        config.num_epochs = args.num_epochs
+    if args.learning_rate is not None:
+        config.learning_rate = args.learning_rate
+    if args.warmup_steps is not None:
+        config.warmup_steps = args.warmup_steps
+    if args.warmup_ratio is not None:
+        config.warmup_ratio = args.warmup_ratio
+    if args.freeze_encoder:
+        config.freeze_encoder = True
+    if args.freeze_encoder_layers is not None:
+        config.freeze_encoder_layers = args.freeze_encoder_layers
+    if args.embedding_noise_std is not None:
+        config.embedding_noise_std = args.embedding_noise_std
+    if args.pooling_strategy is not None:
+        config.pooling_strategy = args.pooling_strategy
+    if args.torch_dtype is not None:
+        config.torch_dtype = args.torch_dtype
     if args.disable_wandb:
         config.use_wandb = False
 
@@ -712,6 +818,8 @@ def main():
             shuffle=train_sampler is None,
             sampler=train_sampler,
             num_workers=args.num_workers,
+            pin_memory=True,
+            persistent_workers=args.num_workers > 0,
             collate_fn=collate_intent_batch,
         )
         val_loader = DataLoader(
@@ -720,6 +828,8 @@ def main():
             shuffle=False,
             sampler=val_sampler,
             num_workers=args.num_workers,
+            pin_memory=True,
+            persistent_workers=args.num_workers > 0,
             collate_fn=collate_intent_batch,
         )
 
@@ -768,9 +878,8 @@ def main():
                 projection_head,
                 device_ids=[local_rank],
                 output_device=local_rank,
-                # Some batches have no positive label pairs, so metric losses can
-                # skip projection-head gradients for that step.
-                find_unused_parameters=True,
+                # Loss fallbacks guarantee gradient flow even on pairless batches.
+                find_unused_parameters=False,
             )
 
         circle_loss_fn = CircleLoss(
@@ -807,8 +916,14 @@ def main():
             warmup_steps = min(config.warmup_steps, total_steps)
         else:
             warmup_steps = int(total_steps * config.warmup_ratio)
+        if warmup_steps >= total_steps:
+            # If explicit warmup is larger than the full run, fall back to ratio.
+            warmup_steps = int(total_steps * config.warmup_ratio)
+            if warmup_steps >= total_steps:
+                warmup_steps = 0
 
         scheduler = None
+        scheduler_name = "none"
         if config.use_lr_scheduler and total_steps > 0:
             if warmup_steps > 0 and warmup_steps < total_steps:
                 warmup = torch.optim.lr_scheduler.LinearLR(
@@ -826,12 +941,14 @@ def main():
                     schedulers=[warmup, cosine],
                     milestones=[warmup_steps],
                 )
+                scheduler_name = "linear_warmup+cosine"
             else:
                 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                     optimizer,
                     T_max=total_steps,
                     eta_min=1e-7,
                 )
+                scheduler_name = "cosine"
 
         if is_main_process:
             print("\nTraining configuration:")
@@ -840,6 +957,7 @@ def main():
             print(f"  Learning rate: {config.learning_rate}")
             print(f"  Total optimizer steps: {total_steps}")
             print(f"  Warmup steps: {warmup_steps}")
+            print(f"  Scheduler: {scheduler_name}")
 
         best_val_loss = float("inf")
         global_step = 0

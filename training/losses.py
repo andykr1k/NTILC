@@ -14,6 +14,26 @@ import torch.nn.functional as F
 from typing import Dict
 
 
+def _uniformity_loss_from_similarity(
+    similarity_matrix: torch.Tensor,
+    temperature: float,
+) -> torch.Tensor:
+    """
+    Uniformity fallback that always depends on embeddings.
+
+    Used when a batch has no valid positive/negative pairs for supervised
+    metric losses so gradients still flow through the projection path.
+    """
+    batch_size = similarity_matrix.shape[0]
+    device = similarity_matrix.device
+    if batch_size < 2:
+        return similarity_matrix.new_zeros(1, requires_grad=True)
+
+    mask = ~torch.eye(batch_size, dtype=torch.bool, device=device)
+    off_diagonal_sim = similarity_matrix[mask].view(batch_size, batch_size - 1)
+    return torch.log(torch.exp(off_diagonal_sim / temperature).mean() + 1e-8)
+
+
 class ContrastiveLoss(nn.Module):
     """
     Contrastive loss to prevent embedding collapse.
@@ -103,21 +123,17 @@ class ContrastiveLoss(nn.Module):
             
             if valid_samples > 0:
                 loss = loss / valid_samples
-            
-            return loss
+                return loss
+
+            # No valid labeled pairs in this local batch (common with many tools).
+            # Fall back to uniformity so embeddings still receive gradients.
+            return _uniformity_loss_from_similarity(similarity_matrix, self.temperature)
         
         else:
             # Without labels: use uniformity loss to spread embeddings
             # Penalize high similarity between different samples
             
-            # Remove diagonal
-            mask = ~torch.eye(batch_size, dtype=torch.bool, device=device)
-            off_diagonal_sim = similarity_matrix[mask].view(batch_size, batch_size - 1)
-            
-            # Uniformity loss: push all pairs apart
-            uniformity_loss = torch.log(torch.exp(off_diagonal_sim / self.temperature).mean() + 1e-8)
-            
-            return uniformity_loss
+            return _uniformity_loss_from_similarity(similarity_matrix, self.temperature)
 
 
 class CircleLoss(nn.Module):
@@ -194,8 +210,10 @@ class CircleLoss(nn.Module):
         
         if len(losses) > 0:
             return torch.stack(losses).mean()
-        else:
-            return embeddings.new_zeros(1, requires_grad=True)
+
+        # No valid positive/negative pairs in this local batch.
+        # Fall back to a differentiable uniformity objective.
+        return _uniformity_loss_from_similarity(similarity_matrix, temperature=0.07)
 
 
 class EmbeddingRegularizationLoss(nn.Module):
