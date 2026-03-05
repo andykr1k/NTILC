@@ -32,7 +32,7 @@ from models.intent_embedder import ToolIntentEmbedder
 from models.projection_head import ProjectionHead
 from training.config import IntentEmbeddingConfig
 from training.losses import CircleLoss, ContrastiveLoss, EmbeddingRegularizationLoss
-from evaluation.metrics import compute_cluster_metrics
+from training.metrics import compute_cluster_metrics
 
 
 def augment_query(query: str) -> str:

@@ -1,8 +1,4 @@
-"""Thin NTILC inference facade.
-
-Public classes are re-exported lazily for backward compatibility.
-CLI execution delegates to orchestrator.cli.main.
-"""
+"""Agent package exports."""
 
 from __future__ import annotations
 
@@ -11,39 +7,21 @@ from typing import Any, Dict, Tuple
 
 
 _EXPORTS: Dict[str, Tuple[str, str]] = {
-    "ClusterBasedToolSystem": ("orchestrator.retrieval.system", "ClusterBasedToolSystem"),
     "NTILCOrchestratorAgent": ("orchestrator.agent.runtime", "NTILCOrchestratorAgent"),
     "QwenOrchestratorModel": ("orchestrator.generation.model", "QwenOrchestratorModel"),
     "OrchestratorStepResult": ("orchestrator.results.types", "OrchestratorStepResult"),
     "OrchestratorRunResult": ("orchestrator.results.types", "OrchestratorRunResult"),
 }
 
-__all__ = [
-    "ClusterBasedToolSystem",
-    "NTILCOrchestratorAgent",
-    "QwenOrchestratorModel",
-    "OrchestratorStepResult",
-    "OrchestratorRunResult",
-    "main",
-]
+__all__ = list(_EXPORTS.keys())
 
 
 def __getattr__(name: str) -> Any:
     target = _EXPORTS.get(name)
     if target is None:
-        raise AttributeError(f"module 'inference' has no attribute '{name}'")
+        raise AttributeError(f"module 'orchestrator.agent' has no attribute '{name}'")
     module_name, attr_name = target
     module = importlib.import_module(module_name)
     value = getattr(module, attr_name)
     globals()[name] = value
     return value
-
-
-def main() -> None:
-    from orchestrator.cli.main import main as orchestrator_main
-
-    orchestrator_main()
-
-
-if __name__ == "__main__":
-    main()

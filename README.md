@@ -206,6 +206,8 @@ run = agent.run(
 )
 
 print(run.plan_block)
+print(run.atomic_actions)
+print(run.action_failures)
 for step in run.steps:
     print(step.dispatch_block)
     print(step.response_block)

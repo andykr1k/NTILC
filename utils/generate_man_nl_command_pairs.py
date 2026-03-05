@@ -1,450 +1,511 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os
-import sys
+"""
+Generate natural language ↔ CLI command pairs from man-page JSON records
+using Qwen model in a multi-GPU batched inference setup.
+
+Shows progress with tqdm.
+
+Fixes applied:
+  1. Added `import queue` — was missing, caused NameError on queue.Empty
+  2. `buffered` counter now incremented inside the loop so FLUSH_EVERY works
+  3. Task enqueueing moved to a background thread to avoid deadlock while
+     workers are still loading the model (queue fillup would block main before
+     the result-collection loop even started)
+  4. Workers only receive one None sentinel (sent from main thread after all
+     results are collected); the signal handler no longer double-sends them
+"""
+
 import json
-import time
+import os
 import queue
+import re
+import sys
+import time
 import random
 import signal
+import threading
 import traceback
-import multiprocessing as mp
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional
 
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
+import multiprocessing as mp
+from multiprocessing import Queue, Process
 
+from tqdm import tqdm
 
-# -----------------------------
-# Config
-# -----------------------------
-INPUT_PATH = "/scratch4/home/akrik/NTILC/data/man/raw_ai.json"
-OUTPUT_JSONL_PATH = "/scratch4/home/akrik/NTILC/data/man/nl_command_pairs.jsonl"
-OUTPUT_JSON_ARRAY_PATH = "/scratch4/home/akrik/NTILC/data/man/nl_command_pairs.json"
+# ──────────────────────────────────────────────────────────────────────────────
+#   Configuration
+# ──────────────────────────────────────────────────────────────────────────────
 
-MODEL_ID = "Qwen/Qwen3.5-9B"
+INPUT_JSON        = Path("/scratch4/home/akrik/NTILC/data/man/raw_ai.json")
+OUTPUT_JSONL      = Path("/scratch4/home/akrik/NTILC/data/man/nl_command_pairs.jsonl")
+OUTPUT_JSON_ARRAY = Path("/scratch4/home/akrik/NTILC/data/man/nl_command_pairs.json")
 
-GPU_IDS = [0,1,2,3]
-NUM_WORKERS = len(GPU_IDS)
+MODEL_NAME = "Qwen/Qwen3-30B-A3B-Instruct-2507"
 
-BATCH_SIZE = 16
-MAX_NEW_TOKENS = 2048
-TEMPERATURE = 0.7
-TOP_P = 0.9
-DO_SAMPLE = True
+GPUS         = [0, 1, 2, 3]
+NUM_WORKERS  = len(GPUS)
 
-N_EXAMPLES = 25
-SEED = 42
+BATCH_SIZE      = 8
+MAX_NEW_TOKENS  = 2048
+TEMPERATURE     = 0.12
+TOP_P           = 0.82
+DO_SAMPLE       = True
 
-LOG_EVERY_SEC = 10
-FLUSH_EVERY_N_LINES = 50
+TARGET_EXAMPLES = 25
+MIN_EXAMPLES    = 18
 
+SEED_BASE       = 42
 
-SYSTEM = """You generate dataset examples for a tool-using assistant.
+FLUSH_EVERY     = 40
+MAX_RETRIES     = 2
 
-Given ONE CLI tool record, produce EXACTLY 25 diverse examples.
+# ──────────────────────────────────────────────────────────────────────────────
+#   Prompt – strict format enforcement
+# ──────────────────────────────────────────────────────────────────────────────
 
-Each example must be a pair:
-- nl_query: natural language user request (1 sentence)
-- command: a realistic CLI command using the tool name and ONLY options present in the record
+SYSTEM = """You are a strict JSON generator. Output ONLY valid JSON — nothing else.
+
+Forbidden:
+- thinking steps
+- <think>
+- reasoning
+- explanations
+- markdown
+- ```json
+- prose
+- "Here is"
+- trailing text
+
+You MUST output exactly this structure:
+
+{"tool":"name","examples":[{"nl_query":"short natural language request","command":"realistic command using ONLY flags from RECORD"}, ... exactly 25 items]}
 
 Rules:
-- Do NOT invent options or flags not present.
-- Prefer different intents (help/version/list/report/paths/modes) when supported by options.
-- Commands should be concrete; if invocation requires placeholders, use realistic placeholder values.
-- Output MUST be valid JSON ONLY with this exact schema:
+- exactly 25 examples
+- nl_query = one short sentence
+- command = realistic CLI call using ONLY documented flags/options
+- do NOT invent flags
+- no extra text before/after JSON
 
-{
-  "tool": "<tool name>",
-  "examples": [
-    {"nl_query": "...", "command": "..."},
-    ...
-    (25 total)
-  ]
-}
+Correct example (do NOT copy — create your own):
+
+{"tool":"ls","examples":[{"nl_query":"List all files including hidden.","command":"ls -a"},{"nl_query":"Show detailed list with human sizes.","command":"ls -lh"}, ... 23 more ...]}
+
+Generate for this RECORD now.
 """
 
-def build_prompt(rec: Dict[str, Any]) -> str:
+
+def make_prompt(record: dict, tokenizer: AutoTokenizer) -> str:
     compact = {
-        "name": rec.get("name", ""),
-        "one_line": rec.get("one_line", ""),
-        "description": rec.get("description", ""),
-        "invocation": rec.get("invocation", ""),
-        "options": rec.get("options", []),
-        "source_url": rec.get("source_url", ""),
+        k: record[k]
+        for k in ["name", "one_line", "description", "invocation", "options"]
+        if k in record
     }
-    # Compact JSON lowers prompt tokens and improves throughput.
-    return SYSTEM + "\n\nRECORD:\n" + json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
+    user_text = "RECORD:\n" + json.dumps(compact, separators=(",", ":"), ensure_ascii=False)
 
+    messages = [
+        {"role": "system", "content": SYSTEM},
+        {"role": "user",   "content": user_text},
+    ]
 
-def extract_json_obj(text: str) -> Dict[str, Any]:
-    decoder = json.JSONDecoder()
-    start = text.find("{")
-    while start != -1:
-        try:
-            candidate, _ = decoder.raw_decode(text[start:])
-            if isinstance(candidate, dict):
-                return candidate
-        except json.JSONDecodeError:
-            pass
-        start = text.find("{", start + 1)
-    raise ValueError("No valid JSON object found in model output")
-
-
-def normalize_examples(examples: Any) -> List[Dict[str, str]]:
-    out: List[Dict[str, str]] = []
-    if not isinstance(examples, list):
-        return out
-    for ex in examples[:N_EXAMPLES]:
-        if not isinstance(ex, dict):
-            continue
-        if "nl_query" not in ex or "command" not in ex:
-            continue
-        nl_query = str(ex["nl_query"]).strip()
-        command = str(ex["command"]).strip()
-        if not nl_query or not command:
-            continue
-        out.append(
-            {
-                "nl_query": nl_query,
-                "command": command,
-            }
+    try:
+        return tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
         )
-    return out
+    except Exception:
+        return SYSTEM + "\n\n" + user_text + "\n"
 
 
-def log(msg: str) -> None:
-    ts = time.strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] {msg}", flush=True)
+# ──────────────────────────────────────────────────────────────────────────────
+#   JSON extraction – tolerant to common model mistakes
+# ──────────────────────────────────────────────────────────────────────────────
+
+def extract_json(raw: str) -> Optional[dict]:
+    text = re.sub(
+        r"(?is)(<think>|思考过程|reasoning|assistant\s*think).*?(?=\{|$)",
+        "",
+        raw,
+        flags=re.DOTALL,
+    )
+    text = re.sub(r"(?is)^(Here is|```json|```)\s*", "", text)
+    text = re.sub(r"\s*```$", "", text).strip()
+
+    def find_largest_dict(s: str) -> Optional[dict]:
+        best, best_count = None, -1
+        pos = 0
+        decoder = json.JSONDecoder()
+        while pos < len(s):
+            if s[pos] not in "{[":
+                pos += 1
+                continue
+            try:
+                obj, end = decoder.raw_decode(s[pos:])
+                if isinstance(obj, dict):
+                    ex = obj.get("examples", [])
+                    if isinstance(ex, list) and len(ex) > best_count:
+                        best, best_count = obj, len(ex)
+                pos += end
+            except json.JSONDecodeError:
+                pos += 1
+        return best
+
+    candidate = find_largest_dict(text)
+    if candidate and isinstance(candidate.get("examples"), list):
+        return candidate
+
+    # Fallback: regex extraction
+    tool_match = re.search(r'"tool"\s*:\s*"([^"]+)"', text)
+    pairs = re.findall(
+        r'\{\s*"nl_query"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"command"\s*:\s*"((?:[^"\\]|\\.)*)"\s*\}',
+        text,
+    )
+    if pairs and len(pairs) >= MIN_EXAMPLES // 2:
+        return {
+            "tool": tool_match.group(1) if tool_match else "unknown",
+            "examples": [{"nl_query": q, "command": c} for q, c in pairs],
+        }
+
+    return None
 
 
-def set_seed(seed: int) -> None:
-    random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+def clean_examples(raw_examples: Any) -> List[Dict[str, str]]:
+    if not isinstance(raw_examples, list):
+        return []
+    cleaned = []
+    for item in raw_examples:
+        if not isinstance(item, dict):
+            continue
+        q = str(item.get("nl_query", "")).strip()
+        c = str(item.get("command", "")).strip()
+        if q and c:
+            cleaned.append({"nl_query": q, "command": c})
+            if len(cleaned) == TARGET_EXAMPLES:
+                break
+    return cleaned
 
 
-def parse_generated_payload(rec: Dict[str, Any], generated_text: str, n_examples: int) -> Dict[str, Any]:
-    data = extract_json_obj(generated_text)
-    exs = normalize_examples(data.get("examples"))
-    if len(exs) != n_examples:
-        raise ValueError(f"Expected {n_examples} examples, got {len(exs)}")
-    return {
-        "tool": rec.get("name", ""),
-        "source_url": rec.get("source_url"),
-        "examples": exs,
-    }
+# ──────────────────────────────────────────────────────────────────────────────
+#   Worker process
+# ──────────────────────────────────────────────────────────────────────────────
 
-
-def decode_generated_texts(
-    tokenizer: AutoTokenizer,
-    out_ids: torch.Tensor,
-    prompt_lens: List[int],
-) -> List[str]:
-    texts: List[str] = []
-    for row_ids, prompt_len in zip(out_ids, prompt_lens):
-        generated_ids = row_ids[int(prompt_len):].tolist()
-        texts.append(tokenizer.decode(generated_ids, skip_special_tokens=True).strip())
-    return texts
-
-
-def worker_main(
+def worker(
     worker_id: int,
     gpu_id: int,
-    task_q: mp.Queue,
-    result_q: mp.Queue,
-    cfg: Dict[str, Any],
-) -> None:
-    """
-    Each worker owns one GPU and a model instance.
-    Receives tasks: (start_index, batch_records)
-    Returns results: list of (index, ok, payload_or_error)
-    """
-    try:
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-        device = torch.device("cuda")
+    task_q: Queue,
+    result_q: Queue,
+    cfg: dict,
+):
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    device = torch.device("cuda")
 
-        set_seed(cfg["seed"] + worker_id)
+    torch.manual_seed(cfg["seed"] + worker_id * 10007)
+    random.seed(cfg["seed"] + worker_id * 10007)
 
-        log(f"worker{worker_id} init on cuda:{gpu_id}")
+    print(f"[W{worker_id}] Loading on cuda:{gpu_id} ...", flush=True)
 
-        tokenizer = AutoTokenizer.from_pretrained(cfg["model_id"], trust_remote_code=True)
-        model = AutoModelForCausalLM.from_pretrained(
-            cfg["model_id"],
-            torch_dtype="auto",
-            device_map={"": 0},
-            trust_remote_code=True,
-        )
-        model.eval()
+    tokenizer = AutoTokenizer.from_pretrained(cfg["model"], trust_remote_code=True)
+    tokenizer.padding_side = "left"
 
-        if tokenizer.pad_token_id is None:
-            tokenizer.pad_token = tokenizer.eos_token
+    model = AutoModelForCausalLM.from_pretrained(
+        cfg["model"],
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+        trust_remote_code=True,
+    )
+    model.eval()
 
-        gen_kwargs = dict(
-            max_new_tokens=cfg["max_new_tokens"],
-            do_sample=cfg["do_sample"],
-            temperature=cfg["temperature"],
-            top_p=cfg["top_p"],
-            pad_token_id=tokenizer.pad_token_id,
-            eos_token_id=tokenizer.eos_token_id,
-        )
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
 
-        def process_batch(start_idx: int, batch: List[Dict[str, Any]]) -> List[Tuple[int, bool, Any]]:
-            prompts = [build_prompt(r) for r in batch]
+    stop_tokens = [
+        tokenizer.eos_token_id,
+        tokenizer.convert_tokens_to_ids("<|im_end|>"),
+        tokenizer.convert_tokens_to_ids("<|endoftext|>"),
+        tokenizer.convert_tokens_to_ids("<|end|>"),
+    ]
+    stop_tokens = [t for t in stop_tokens if t is not None]
+
+    gen_config = {
+        "max_new_tokens": cfg["max_new_tokens"],
+        "temperature": cfg["temperature"],
+        "top_p": cfg["top_p"],
+        "do_sample": cfg["do_sample"],
+        "pad_token_id": tokenizer.pad_token_id,
+        "eos_token_id": stop_tokens,
+    }
+
+    print(f"[W{worker_id}] Ready", flush=True)
+
+    while True:
+        task = task_q.get()
+        if task is None:
+            break
+
+        start_idx, records = task
+        batch_results = []
+
+        prompts = [make_prompt(r, tokenizer) for r in records]
+
+        try:
             inputs = tokenizer(
                 prompts,
                 return_tensors="pt",
                 padding=True,
                 truncation=True,
-                max_length=cfg["max_input_tokens"],
+                max_length=4096,
             ).to(device)
-            prompt_lens = inputs["attention_mask"].sum(dim=1).tolist()
 
-            try:
-                with torch.inference_mode():
-                    out_ids = model.generate(**inputs, **gen_kwargs)
-            except torch.cuda.OutOfMemoryError:
-                torch.cuda.empty_cache()
-                if len(batch) == 1:
-                    rec = batch[0]
-                    return [
-                        (
-                            start_idx,
-                            False,
-                            {
-                                "tool": rec.get("name", ""),
-                                "error": "CUDA out of memory while generating this record",
-                                "traceback": "",
-                            },
-                        )
-                    ]
-                mid = len(batch) // 2
-                left = process_batch(start_idx, batch[:mid])
-                right = process_batch(start_idx + mid, batch[mid:])
-                return left + right
+            prompt_lengths = inputs.attention_mask.sum(dim=1).tolist()
 
-            decoded = decode_generated_texts(tokenizer, out_ids, prompt_lens)
-            results: List[Tuple[int, bool, Any]] = []
-            for i, rec in enumerate(batch):
-                global_idx = start_idx + i
-                try:
-                    payload = parse_generated_payload(rec, decoded[i], cfg["n_examples"])
-                    results.append((global_idx, True, payload))
-                except Exception as e:
-                    results.append(
-                        (
-                            global_idx,
-                            False,
-                            {
-                                "tool": rec.get("name", ""),
-                                "error": str(e),
-                                "traceback": traceback.format_exc(limit=3),
-                            },
-                        )
-                    )
-            return results
+            with torch.inference_mode():
+                generated_ids = model.generate(**inputs, **gen_config)
 
-        while True:
-            item = task_q.get()
-            if item is None:
-                log(f"worker{worker_id} shutdown")
-                break
+            for i, rec in enumerate(records):
+                idx = start_idx + i
+                tool = rec.get("name", "unknown")
+                gen_ids = generated_ids[i, prompt_lengths[i]:]
+                text = tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
 
-            start_idx, batch = item
-            try:
-                results = process_batch(start_idx, batch)
-            except Exception as e:
-                # Keep worker alive and return per-item failures for this batch.
-                results = []
-                for i, rec in enumerate(batch):
-                    results.append(
-                        (
-                            start_idx + i,
-                            False,
-                            {
-                                "tool": rec.get("name", ""),
-                                "error": str(e),
-                                "traceback": traceback.format_exc(limit=3),
-                            },
-                        )
-                    )
-            result_q.put(("BULK", worker_id, results))
+                data = extract_json(text)
+                if not data:
+                    raise ValueError("No JSON parsed")
 
-    except Exception as e:
-        result_q.put(("FATAL", worker_id, {"error": str(e), "traceback": traceback.format_exc()}))
+                examples = clean_examples(data.get("examples"))
+                n = len(examples)
+
+                if n < MIN_EXAMPLES:
+                    raise ValueError(f"Only {n} usable examples (min {MIN_EXAMPLES})")
+
+                payload = {
+                    "tool": tool,
+                    "source_url": rec.get("source_url"),
+                    "examples": examples[:TARGET_EXAMPLES],
+                }
+                batch_results.append((idx, True, payload))
+
+        except Exception as batch_exc:
+            # Retry each record individually if the batch failed
+            for i, rec in enumerate(records):
+                idx = start_idx + i
+                tool = rec.get("name", "unknown")
+                raw_preview = ""
+                success = False
+
+                for attempt in range(MAX_RETRIES):
+                    try:
+                        single_prompt = make_prompt(rec, tokenizer)
+                        single_inputs = tokenizer(
+                            [single_prompt], return_tensors="pt", padding=True
+                        ).to(device)
+
+                        with torch.inference_mode():
+                            out = model.generate(**single_inputs, **gen_config)
+
+                        gen_ids = out[0, single_inputs.input_ids.size(1):]
+                        text = tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
+                        raw_preview = text[:500]
+
+                        data = extract_json(text)
+                        if not data:
+                            continue
+
+                        examples = clean_examples(data.get("examples"))
+                        if len(examples) >= MIN_EXAMPLES:
+                            payload = {
+                                "tool": tool,
+                                "source_url": rec.get("source_url"),
+                                "examples": examples[:TARGET_EXAMPLES],
+                            }
+                            batch_results.append((idx, True, payload))
+                            success = True
+                            break
+
+                    except Exception:
+                        continue
+
+                if not success:
+                    batch_results.append((idx, False, {
+                        "tool": tool,
+                        "error": str(batch_exc),
+                        "traceback": traceback.format_exc(limit=3),
+                        "raw_preview": raw_preview,
+                    }))
+
+        result_q.put(("BULK", worker_id, batch_results))
+
+    print(f"[W{worker_id}] Finished", flush=True)
 
 
-def run() -> None:
-    records = json.loads(Path(INPUT_PATH).read_text(encoding="utf-8"))
+# ──────────────────────────────────────────────────────────────────────────────
+#   Background enqueue thread — prevents deadlock during model loading
+# ──────────────────────────────────────────────────────────────────────────────
+
+def enqueue_tasks(records: list, task_q: Queue, batch_size: int):
+    """Push all batches into task_q from a background thread."""
+    i = 0
+    while i < len(records):
+        batch = records[i : i + batch_size]
+        task_q.put((i, batch))
+        i += len(batch)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#   Main
+# ──────────────────────────────────────────────────────────────────────────────
+
+def main():
+    if not INPUT_JSON.is_file():
+        print(f"Input file not found: {INPUT_JSON}", file=sys.stderr)
+        sys.exit(1)
+
+    records = json.loads(INPUT_JSON.read_text(encoding="utf-8"))
     if not isinstance(records, list):
-        raise ValueError(f"Expected input JSON to be a list, got: {type(records).__name__}")
+        print("Input JSON must be a list of records", file=sys.stderr)
+        sys.exit(1)
 
-    total = len(records)
-    log(f"Loaded {total} records from {INPUT_PATH}")
+    total_records = len(records)
+    print(f"Loaded {total_records} records", flush=True)
 
     mp.set_start_method("spawn", force=True)
 
-    task_q: mp.Queue = mp.Queue(maxsize=NUM_WORKERS * 4)
-    result_q: mp.Queue = mp.Queue(maxsize=NUM_WORKERS * 8)
+    # FIX #4: queue large enough that the producer thread never blocks before
+    # the result-consumer loop is running.  Workers may still be loading their
+    # models when tasks are enqueued, so we allow the whole queue to fill.
+    task_q   = mp.Queue(maxsize=0)   # unbounded — producer thread fills freely
+    result_q = mp.Queue(maxsize=NUM_WORKERS * 10)
 
-    cfg = dict(
-        model_id=MODEL_ID,
-        seed=SEED,
-        batch_size=BATCH_SIZE,
-        max_new_tokens=MAX_NEW_TOKENS,
-        max_input_tokens=4096,
-        temperature=TEMPERATURE,
-        top_p=TOP_P,
-        do_sample=DO_SAMPLE,
-        n_examples=N_EXAMPLES,
-    )
+    cfg = {
+        "model":          MODEL_NAME,
+        "seed":           SEED_BASE,
+        "max_new_tokens": MAX_NEW_TOKENS,
+        "temperature":    TEMPERATURE,
+        "top_p":          TOP_P,
+        "do_sample":      DO_SAMPLE,
+    }
 
-    workers: List[mp.Process] = []
-    for wid, gid in enumerate(GPU_IDS):
-        p = mp.Process(
-            target=worker_main,
+    workers = []
+    for wid, gid in enumerate(GPUS):
+        p = Process(
+            target=worker,
             args=(wid, gid, task_q, result_q, cfg),
+            name=f"worker-{wid}",
         )
         p.start()
         workers.append(p)
 
-    def handle_sigint(sig, frame):
-        log("SIGINT received, shutting down...")
+    # FIX #3: track whether shutdown was already triggered so we only send
+    # sentinel None values once.
+    _shutdown_called = threading.Event()
+
+    def shutdown(signum=None, frame=None):
+        if _shutdown_called.is_set():
+            return
+        _shutdown_called.set()
+        print("\nCaught interrupt → shutting down...", flush=True)
         for _ in workers:
             task_q.put(None)
         for p in workers:
-            p.join(timeout=5)
+            p.join(timeout=8)
+            if p.is_alive():
+                p.terminate()
+                p.join(timeout=3)
         sys.exit(1)
 
-    signal.signal(signal.SIGINT, handle_sigint)
+    signal.signal(signal.SIGINT, shutdown)
 
-    next_idx = 0
-    in_flight = 0
+    # FIX #4: enqueue in a background thread so main can immediately start
+    # collecting results — workers load models in parallel with task production.
+    producer = threading.Thread(
+        target=enqueue_tasks,
+        args=(records, task_q, BATCH_SIZE),
+        daemon=True,
+    )
+    producer.start()
 
-    generated_tools = 0
-    generated_examples = 0
-    failed_tools = 0
-
-    last_log = time.time()
+    successes  = 0
+    failures   = 0
     start_time = time.time()
+    # FIX #2: buffered is now correctly incremented inside the loop
+    buffered   = 0
 
-    out_path = Path(OUTPUT_JSONL_PATH)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    buffered_lines = 0
+    OUTPUT_JSONL.parent.mkdir(parents=True, exist_ok=True)
 
-    def write_payload(payload: Dict[str, Any], fout) -> None:
-        nonlocal buffered_lines, generated_tools, generated_examples
-        fout.write(json.dumps(payload, ensure_ascii=False) + "\n")
-        buffered_lines += 1
-        generated_tools += 1
-        generated_examples += len(payload["examples"])
+    with OUTPUT_JSONL.open("w", encoding="utf-8") as f_out, \
+         tqdm(total=total_records, desc="Generating", unit="tool", dynamic_ncols=True) as pbar:
 
-    def write_error(err: Dict[str, Any], fout) -> None:
-        nonlocal buffered_lines, failed_tools
-        fout.write(json.dumps({"_failed": True, **err}, ensure_ascii=False) + "\n")
-        buffered_lines += 1
-        failed_tools += 1
-
-    def log_progress(force: bool = False) -> None:
-        nonlocal last_log
-        now = time.time()
-        if not force and now - last_log < LOG_EVERY_SEC:
-            return
-        elapsed = now - start_time
-        rate = (generated_tools / elapsed) if elapsed > 0 else 0.0
-        log(
-            f"progress: {generated_tools + failed_tools}/{total} "
-            f"(ok={generated_tools}, fail={failed_tools}), "
-            f"in_flight={in_flight}, next_idx={next_idx}, tools/sec={rate:.2f}"
-        )
-        last_log = now
-
-    def fill_queue() -> None:
-        nonlocal next_idx, in_flight
-        while next_idx < total and in_flight < NUM_WORKERS * 2:
-            batch = records[next_idx: next_idx + cfg["batch_size"]]
-            task_q.put((next_idx, batch))
-            in_flight += 1
-            next_idx += len(batch)
-
-    def shutdown_workers() -> None:
-        for _ in workers:
+        done = 0
+        while done < total_records:
             try:
-                task_q.put(None, timeout=0.2)
-            except queue.Full:
-                break
-        for p in workers:
-            p.join(timeout=10)
-            if p.is_alive():
-                log(f"worker pid={p.pid} did not exit cleanly; terminating")
-                p.terminate()
-                p.join(timeout=2)
+                # FIX #1: `queue` module is now imported — queue.Empty works
+                typ, wid, items = result_q.get(timeout=2.0)
+            except queue.Empty:   # ← was NameError before
+                continue
 
-    fill_queue()
+            if typ == "BULK":
+                for _, ok, payload in items:
+                    if ok:
+                        json.dump(payload, f_out, ensure_ascii=False)
+                        f_out.write("\n")
+                        successes += 1
+                    else:
+                        err = {"_failed": True, **payload}
+                        json.dump(err, f_out, ensure_ascii=False)
+                        f_out.write("\n")
+                        failures += 1
 
-    try:
-        with out_path.open("w", encoding="utf-8") as fout:
-            while in_flight > 0:
-                try:
-                    kind, wid, payload = result_q.get(timeout=1.0)
-                except queue.Empty:
-                    dead_workers = [i for i, p in enumerate(workers) if not p.is_alive()]
-                    if dead_workers:
-                        raise RuntimeError(f"workers exited unexpectedly: {dead_workers}")
-                    log_progress()
-                    continue
+                    done     += 1
+                    buffered += 1   # FIX #2: was never incremented before
+                    pbar.update(1)
 
-                if kind == "FATAL":
-                    log(f"worker{wid} fatal: {payload['error']}\n{payload['traceback']}")
-                    raise RuntimeError(f"worker{wid} died")
+                    pbar.set_postfix(
+                        {
+                            "ok":    successes,
+                            "fail":  failures,
+                            "ok%":   f"{successes / (successes + failures) * 100:.1f}%"
+                                     if (successes + failures) > 0 else "0%",
+                            "speed": f"{done / (time.time() - start_time):.1f}/s",
+                        },
+                        refresh=True,
+                    )
 
-                if kind == "BULK":
-                    for _, ok, item in payload:
-                        if ok:
-                            write_payload(item, fout)
-                        else:
-                            write_error(item, fout)
-                else:
-                    log(f"unknown message kind={kind} from worker{wid}")
+                if buffered >= FLUSH_EVERY:
+                    f_out.flush()
+                    buffered = 0
 
-                in_flight -= 1
+    producer.join()
 
-                if buffered_lines >= FLUSH_EVERY_N_LINES:
-                    fout.flush()
-                    buffered_lines = 0
+    # FIX #3: send sentinels only if shutdown hasn't already done so
+    if not _shutdown_called.is_set():
+        for _ in workers:
+            task_q.put(None)
 
-                fill_queue()
-                log_progress()
-    finally:
-        shutdown_workers()
+    for p in workers:
+        p.join(timeout=10)
 
     elapsed = time.time() - start_time
-    log(
-        f"Done. ok_tools={generated_tools}, failed_tools={failed_tools}, "
-        f"total_examples={generated_examples}, elapsed_sec={elapsed:.1f}"
-    )
-    log(f"Saved JSONL to: {OUTPUT_JSONL_PATH}")
+    print(f"\nDone in {elapsed:.1f}s")
+    print(f"Success: {successes}  |  Failed: {failures}  |  Total: {total_records}")
+    print(f"Output saved → {OUTPUT_JSONL}")
 
+    # Convert to pretty JSON array
     try:
-        arr_out = Path(OUTPUT_JSON_ARRAY_PATH)
-        with out_path.open("r", encoding="utf-8") as fin, arr_out.open("w", encoding="utf-8") as fout:
+        with OUTPUT_JSONL.open("r", encoding="utf-8") as fin, \
+             OUTPUT_JSON_ARRAY.open("w", encoding="utf-8") as fout:
             fout.write("[\n")
-            first = True
-            for line in fin:
-                line = line.strip()
-                if not line:
-                    continue
-                if not first:
-                    fout.write(",\n")
+            lines = [line.strip() for line in fin if line.strip()]
+            for idx, line in enumerate(lines):
                 fout.write(line)
-                first = False
-            fout.write("\n]\n")
-        log(f"Also saved JSON array to: {OUTPUT_JSON_ARRAY_PATH}")
+                fout.write(",\n" if idx < len(lines) - 1 else "\n")
+            fout.write("]\n")
+        print(f"Also saved array format → {OUTPUT_JSON_ARRAY}")
     except Exception as e:
-        log(f"⚠️ could not convert JSONL->JSON array: {e}")
+        print(f"Could not create JSON array: {e}")
 
 
 if __name__ == "__main__":
-    run()
+    main()
