@@ -26,7 +26,7 @@ OUTPUT_JSON_ARRAY_PATH = "/scratch4/home/akrik/NTILC/data/man/nl_command_pairs.j
 
 MODEL_ID = "Qwen/Qwen3.5-9B"
 
-GPU_IDS = [0,1,2,3,4,5,6]
+GPU_IDS = [0,1,2,3]
 NUM_WORKERS = len(GPU_IDS)
 
 BATCH_SIZE = 16
