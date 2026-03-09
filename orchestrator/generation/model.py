@@ -74,6 +74,7 @@ class QwenOrchestratorModel:
         mode: str = "full",
         max_seq_len: int = 512,
         enforce_selected_tool: bool = True,
+        device: Optional[str] = None,
     ) -> "QwenOrchestratorModel":
         if mode not in {"full", "tail"}:
             raise ValueError(f"Unsupported mode: {mode}. Expected `full` or `tail`.")
@@ -84,8 +85,18 @@ class QwenOrchestratorModel:
 
         added_protocol_tokens = register_protocol_tokens(tokenizer)
 
+        target_device = torch.device(device) if device is not None else None
+        if target_device is not None and target_device.type == "cuda" and not torch.cuda.is_available():
+            raise ValueError(f"CUDA device requested but CUDA is not available: {device}")
+
         model_kwargs: Dict[str, Any] = {"trust_remote_code": True}
-        if torch.cuda.is_available():
+        if target_device is not None:
+            if target_device.type == "cuda":
+                model_kwargs["device_map"] = {"": str(target_device)}
+                model_kwargs["torch_dtype"] = _resolve_torch_dtype(None)
+            else:
+                model_kwargs["torch_dtype"] = torch.float32
+        elif torch.cuda.is_available():
             model_kwargs["device_map"] = "auto"
             model_kwargs["torch_dtype"] = _resolve_torch_dtype(None)
         else:
@@ -105,6 +116,9 @@ class QwenOrchestratorModel:
             model = PeftModel.from_pretrained(base_model, lora_adapter_path)
         else:
             model = base_model
+
+        if target_device is not None and target_device.type != "cuda":
+            model = model.to(target_device)
 
         if added_protocol_tokens > 0:
             if hasattr(model, "resize_token_embeddings"):

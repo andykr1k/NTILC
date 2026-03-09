@@ -74,6 +74,7 @@ class NTILCOrchestratorAgent:
                 qwen_model_name_or_path=qwen_model_name_or_path,
                 lora_adapter_path=lora_adapter_path,
                 mode=lora_mode,
+                device=device,
             )
 
         return cls(
