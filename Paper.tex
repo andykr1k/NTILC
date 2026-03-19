@@ -1,16 +1,26 @@
 \documentclass[10pt,twocolumn,letterpaper]{article}
 
-\usepackage[margin=0.75in]{geometry}
+\usepackage[margin=1in]{geometry}
 \usepackage{times}
 \usepackage{graphicx}
-\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{amsmath,amssymb}
 \usepackage{booktabs}
-\usepackage{xcolor}
+\usepackage{array}
 \usepackage{hyperref}
+\usepackage{microtype}
 
 \setlength{\columnsep}{0.25in}
+\setlength{\textfloatsep}{8pt plus 1pt minus 2pt}
+\setlength{\floatsep}{6pt plus 1pt minus 2pt}
+\setlength{\intextsep}{6pt plus 1pt minus 2pt}
+\setlength{\abovecaptionskip}{4pt}
+\setlength{\belowcaptionskip}{0pt}
+\pagestyle{empty}
 
-\title{Neural Orchestration of Tool Use: A Structured Alternative to Prompt-Based Pipelines}
+\newcommand{\method}{NTILC}
+\newcommand{\code}[1]{\texttt{#1}}
+
+\title{\method: Neural Tool Invocation for Linux Tool Calling}
 
 \author{
 Andrew Krikorian \\
@@ -26,112 +36,154 @@ Ann Arbor, MI, USA \\
 \maketitle
 
 \begin{abstract}
-Current large language model systems frequently rely on prompt-based pipelines for tool use. While simple to implement, these pipelines often suffer from brittle planning, unreliable parsing, and significant latency caused by token decoding. In this work we study the limitations of prompt-based tool invocation and introduce a structured alternative based on neural orchestration. Our approach separates planning, tool retrieval, argument generation, and execution into explicit stages coordinated by a lightweight controller. We describe the architecture, dataset construction process, and evaluation framework used to study this design. Experiments demonstrate improvements in reliability, tool selection accuracy, and inference efficiency relative to prompt-based baselines.
+Large language model agents often use prompt-only tool invocation, asking one model to plan, choose a tool, format arguments, and produce a final response in a single generation pass. In practice this creates brittle tool calls, parsing errors, and growing latency as the tool registry expands. We present \method, a Linux tool-calling system that separates planning, tool retrieval, dispatch generation, and validated execution. The implementation uses Qwen with optional LoRA adapters for planning and dispatch, a learned query encoder over tool clusters, and explicit plan, dispatch, and response blocks. This draft focuses on the architecture, dataset construction, and evaluation protocol implemented in the repository. Full benchmark runs are still in progress.
 \end{abstract}
 
 \section{Introduction}
+Tool-augmented language models have moved from a niche systems idea to a default design pattern for modern agents. Whether the tools are web APIs, code interpreters, search engines, or shell commands, the basic workflow is often the same: a model receives a natural-language request, reads a long registry of available actions, and emits a structured function call or command in a single pass. That pattern is attractive because it is simple to prototype, but it burdens one generation step with four separate jobs: plan the task, retrieve the correct tool, produce executable arguments, and synthesize an answer that remains consistent with the tool call. As the registry grows or the request becomes multi-step, these responsibilities interfere with each other.
 
-\subsection{First Paragraph}
-Recent advances in large language models have enabled systems that can interact with external tools such as APIs, command-line utilities, and databases. These systems are often built using prompt-based pipelines in which the model produces both reasoning and tool invocations within a single decoding stream. While this design is easy to implement, it introduces structural limitations that reduce reliability and scalability. As the number of tools increases, models must simultaneously reason about the task, select the correct tool, and generate properly formatted arguments. This coupling between reasoning and execution frequently results in malformed outputs and incorrect tool selection. Consequently, improving the reliability of tool use has become an important research direction for agentic systems.
+The repository behind this paper was built around a concrete instance of that problem: Linux tool calling from natural-language requests. A request such as finding files, inspecting logs, or rewriting shell commands should not require the model to reason over every tool description on every query. It also should not require brittle parsing of free-form generations that may contain explanations, malformed JSON, or partially valid commands. In practice, prompt-only tool calling degrades in exactly these ways. The same prompt that works for a small registry becomes unstable for a large one, and a baseline that is acceptable on easy examples often fails on tool selection, argument canonicalization, or strict output formatting when the query is slightly out of distribution.
 
-\subsection{Second Paragraph}
-Previous work typically addresses these limitations through improved prompting strategies or more detailed schema descriptions. Figure~1 illustrates the contrast between traditional prompt-based pipelines and the structured orchestration framework proposed in this paper. In prompt-based systems the model performs planning, tool selection, argument formatting, and response synthesis in a single generation step. This approach works for simple tasks but becomes unreliable as the tool inventory grows or the task complexity increases. Empirical observations reveal frequent parsing failures, partial tool calls, and degraded tool selection accuracy. These issues motivate a more structured approach to tool invocation.
+We instead decompose tool invocation into four stages: planning, retrieval, dispatch construction, and execution. The planner emits atomic actions, the retriever narrows each action to a small candidate set, the dispatch model produces structured arguments for the selected tool, and the dispatcher validates and records the result. This staged design makes errors easier to localize and reduces dependence on one-shot prompt formatting.
 
-\subsection{Third Paragraph}
+Our central hypothesis is that this staged pipeline will outperform a prompt-only baseline on tool selection, command exact match, parseability, and latency once the benchmark runs are complete. The intuition is that retrieval removes the full registry from the generation context, protocol-constrained decoding reduces formatting errors, and the controller breaks tool use into smaller decisions. The codebase already supports this decomposition; the remaining work is to finish the experiments and quantify the gains.
 
-\subsubsection{Prompt-Based Calling}
-Direct prompt-based tool calling forces the model to perform planning and execution simultaneously. Because both processes occur within the same generation step, the model cannot reliably separate reasoning from action.
-
-\subsubsection{No Tool Calling Stage}
-Many pipelines lack an explicit intermediate stage between the user query and the final answer. Without this stage, the system cannot isolate tool invocation logic from response generation.
-
-\subsubsection{Decoding Latency}
-A substantial portion of inference time is spent decoding tokens rather than performing useful computation such as executing tools.
-
-\subsubsection{Parsing Failures}
-Unstructured outputs frequently break downstream parsers. Small formatting mistakes can cause tool invocations to fail entirely.
-
-\subsubsection{Context Degradation}
-Large tool inventories require long prompts describing available tools. As context length grows, tool selection accuracy decreases due to irrelevant information and attention dilution.
-
-\subsection{Fourth Paragraph}
-To address these limitations we introduce a structured orchestration framework for neural tool use. The system separates the inference pipeline into distinct stages: plan generation, tool retrieval, argument construction, and execution. Each stage operates on structured representations that can be validated before proceeding to the next step. This design reduces reliance on fragile prompt formatting and allows the system to interact with large tool libraries more efficiently. Intuitively, the architecture behaves less like a single monolithic language model and more like a coordinated collection of specialized components.
-
-\subsection{Fifth Paragraph}
-We evaluate the proposed approach using a dataset of natural language instructions paired with executable command targets derived from Linux manual pages. The dataset enables systematic measurement of tool usage accuracy because generated commands can be executed directly. Evaluation metrics include tool selection accuracy, argument correctness, parsing reliability, and inference latency. Experiments compare the proposed orchestration pipeline with prompt-based baselines across several benchmarks. These experiments allow us to analyze both reliability improvements and efficiency gains.
-
-\subsection{Sixth Paragraph}
-This paper makes three primary contributions. First, we analyze structural weaknesses in prompt-based tool-use pipelines and identify their major failure modes. Second, we introduce a neural orchestration architecture that separates planning, tool retrieval, argument generation, and execution. Third, we construct a benchmark dataset and evaluation framework for studying structured tool-use systems. Together these contributions provide a foundation for building more reliable and scalable agentic systems.
+The paper makes three concrete claims. First, the repository implements a complete structured tool-calling pipeline rather than a prompt-only wrapper around a base model. Second, Linux command invocation is a useful benchmark because tool identity, command form, and dispatch behavior can all be checked explicitly. Third, the evaluation setup is designed to show where staged orchestration helps and where it still fails.
 
 \section{Related Work}
+Recent work on tool use in language models has largely followed a prompt-centric recipe. Systems such as ReAct-style agents, function-calling assistants, Toolformer-like augmentation, and production API assistants rely on the model to serialize action selection and argument generation directly in text. This family of methods is flexible, but its weaknesses are now familiar: registry prompts grow large, formatting conventions become brittle, and the gap between ``almost correct'' output and executable output remains operationally expensive.
 
-\subsection{Tool-Augmented Language Models}
-Recent work has explored integrating external tools with language models to extend their capabilities. Methods such as function calling and tool-augmented agents allow models to interact with APIs, databases, and command-line programs. While these approaches improve task performance, many rely on prompt-based generation of structured outputs which introduces reliability challenges.
+Benchmarking work has made these weaknesses more visible. API-Bank evaluates tool search, tool calling, reading documentation, and compositions of those abilities. Berkeley Function Calling Leaderboard (BFCL) measures function-calling quality across increasingly realistic tool-use settings. ToolBench, ToolAlpaca, and related datasets expand the number of APIs and the breadth of tasks, but they also reinforce the same basic observation: better prompting alone does not remove the structural burden of forcing planning, routing, and invocation into one decode stream.
 
-\subsection{Structured Reasoning Pipelines}
-Several research directions attempt to improve reliability by introducing intermediate reasoning structures such as plans, programs, or graphs. These approaches aim to separate reasoning from execution and improve interpretability. Our work follows a similar philosophy but focuses specifically on structured orchestration of tool invocation.
+The design of \method\ is closer in spirit to structured controller systems and program-like intermediate representations. Instead of asking the model to write the final tool call immediately, the system first predicts a compact plan, then uses learned retrieval to reduce the candidate set, then fills dispatch arguments in a protocol-constrained format. That choice is not only about accuracy. It is also about making the system debuggable. If a run fails, the failure can be localized to planning, retrieval, dispatch generation, validation, or execution rather than being hidden inside one uninterpretable generation.
 
 \section{Method}
+\begin{figure*}[t]
+\centering
+\fbox{
+\begin{minipage}{0.96\textwidth}
+\small
+\textbf{Repository-aligned inference flow.}
+User request $\rightarrow$ Qwen planner emits atomic action list $\rightarrow$ learned query encoder retrieves top-$k$ tool clusters $\rightarrow$ mapper resolves cluster-to-tool candidates $\rightarrow$ Qwen dispatch generator emits structured command arguments for the selected tool $\rightarrow$ validated dispatcher applies schema and safety checks $\rightarrow$ response block records success or failure and the controller retries the next candidate if needed.
+\end{minipage}
+}
+\caption{The staged NTILC controller separates planning, retrieval, dispatch generation, and execution.}
+\label{fig:pipeline}
+\end{figure*}
 
-\subsection{Qwen + LoRA}
-The backbone of our system is a Qwen language model adapted using low-rank adaptation (LoRA). The LoRA modules specialize the model for planning and structured output generation while keeping most base model parameters frozen. This allows efficient training while preserving general reasoning capabilities.
+\paragraph{Overview.}
+\method\ is implemented as a full orchestrator runtime rather than a single generator. The entry point constructs a planner, a retrieval system, a cluster-to-tool mapper, and a validated dispatcher. A run begins by converting the user request into a plan block containing atomic actions. Each action is then retrieved against learned cluster centroids, converted into one or more tool candidates, and passed to a dispatch generator that produces a command payload. The dispatcher validates the generated arguments and either returns success or triggers a retry with the next candidate. The important design choice is that the model never needs to read the entire tool registry while also writing the final command.
 
-\subsection{Tool Embeddings}
-Tools are represented using embedding vectors derived from documentation and invocation schemas. When a plan action is produced, the system retrieves candidate tools through embedding similarity search. This retrieval stage limits the number of tools considered during argument generation.
+\paragraph{Planner and protocol tokens.}
+The generation backend uses Qwen with an optional LoRA adapter. The planner is trained to emit protocol tokens for a plan block and atomic action entries. The planner prompt explicitly limits the number of actions, requires them to be atomic, and forbids commentary. If the generated plan is malformed, the runtime falls back to parser-based recovery and atomic-action splitting. This matters because it means the architecture is robust not only to semantic errors but also to partial formatting failures: even when the planner output is imperfect, the controller still attempts to salvage an executable action sequence rather than failing immediately.
 
-\subsection{Argument Generation}
-Arguments are generated through constrained decoding that produces structured dispatch blocks. These blocks explicitly specify the selected tool, options, and arguments in a format that can be verified before execution.
+\paragraph{Retrieval over tool clusters.}
+After planning, each action is embedded by a learned query encoder and compared against normalized cluster centroids. The retrieval checkpoint stores the cluster representations together with the cluster-to-tool mapping. At inference time, the controller retrieves a top-$k$ candidate list and records both similarity scores and tool identities. This step is the main architectural break from prompt-only baselines. In the baseline, the model must infer the correct tool while attending over a long serialized registry. In \method, tool selection is first treated as a retrieval problem, and only the reduced candidate set is passed downstream.
 
-\subsection{Orchestration}
-A lightweight controller coordinates the pipeline stages. After generating a plan, the controller retrieves candidate tools, generates arguments, dispatches commands, and aggregates responses. This staged architecture decouples reasoning from execution while maintaining end-to-end functionality.
+\paragraph{Dispatch generation and validation.}
+Conditioned on the original request, the current atomic action, the selected tool, and short summaries of prior steps, the dispatch generator emits a structured dispatch block. The current architecture uses a simple but useful format containing at least the full command and the original query. The runtime then normalizes the command to ensure it starts with the selected tool whenever full-command mode is used. The dispatcher validates required arguments, applies safety rules, and optionally executes the command. Even in dry-run mode, the dispatch stage provides a concrete object for evaluation: parseability, command canonicalization, tool match, and retry behavior can all be scored without depending on free-form final answers.
 
-\section{Dataset}
+\paragraph{Response blocks and retries.}
+Every dispatch attempt produces a response block that records success or failure together with a short text summary and a retry flag. This explicit response representation is important for two reasons. First, it makes multi-step runs inspectable. Second, it enables a controller policy that is easy to reason about: if the current candidate fails validation or execution, the next retrieved tool can be tried without regenerating the entire plan. The default evaluation pipeline exposes this mechanism directly through top-$k$ retrieval, maximum retries, and per-stage metrics.
 
-\subsection{Scraping}
-We construct a dataset by scraping Linux manual pages and extracting command descriptions, options, and usage patterns. The raw data is cleaned and filtered to remove ambiguous or non-executable examples.
+\section{Dataset and Benchmark Design}
+The project benchmark is built from Linux manual pages and converted into natural-language-to-command pairs. The raw source material provides a tool name, descriptive text, invocation schema, and, after processing, executable command examples. The repository then cleans and flattens these examples into records containing a natural-language query, the target tool, the target command, and metadata such as the source URL used for traceability. Source URLs are preserved for bookkeeping and analysis but are not model features.
 
-\subsection{NL to Command Generation}
-Natural language instructions are paired with executable command targets using automated extraction and model-assisted generation. Each dataset entry includes a query, target command, and tool metadata.
+Linux command invocation is narrower than general API use, but it is a good setting for studying tool-use errors because syntax is unforgiving and correctness is easy to inspect. A prediction can fail by choosing the wrong tool, by constructing the wrong arguments, by producing a non-executable command, or by decomposing a multi-step request incorrectly. Those distinctions are visible in \method\ because the pipeline exposes them directly.
+
+The repository also generates protocol-style supervision from the command benchmark. Dispatch targets are converted into structured command payloads for full-command and tail-only modes. Planner supervision is synthesized by converting individual queries into atomic plans and mixing in synthetic multi-step requests with bounded numbers of actions. This is a practical way to train the planner and dispatch generator without requiring a hand-labeled planning corpus. It also keeps the benchmark story coherent: the model is trained and evaluated on artifacts that match the same plan and dispatch protocol used at inference time.
+
+For evaluation, the code already defines splits for full-clean data, train-overlap examples, and unseen-only examples. It also flags shell-composition cases involving pipes, control operators, and redirections. This is a useful split design because it lets the final paper report both easy in-distribution behavior and the harder generalization setting where the model must retrieve the correct tool for a query-command pair it has not memorized from training. My expectation is that the staged design will matter most on the unseen-only split and on large registries, where prompt-only baselines pay the heaviest context cost.
+
+NTILC also sits in a broader benchmark landscape. API-Bank reports 1,000 training domains and 2,138 training APIs, with a manually annotated evaluation set of 73 runnable APIs, 314 dialogues, and 753 API calls. ToolBench1 is larger in API count, while ToolAlpaca and APIBench cover narrower slices of tool use. NTILC is not aimed at matching those benchmarks in scale; it is aimed at providing a shell-command setting where tool identity, exact command form, and execution-oriented validation are all measurable.
+
+\begin{table}[t]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lccccc}
+\toprule
+Benchmark & Domains & APIs & MT & MC & Resp. \\
+\midrule
+DATESET & 1 & 1 & N & N & N \\
+APIBench & 90 & 1,645 & N & N & N \\
+ToolAlpaca & 50 & 426 & Y & N & Y \\
+ToolBench1 & 49 & 16,464 & Y & Y & N \\
+ToolBench2 & 8 & 232 & N & Y & N \\
+ToolQA & 6 & 13 & N & Y & Y \\
+API-Bank & 1,000 & 2,138 & Y & Y & Y \\
+\bottomrule
+\end{tabular}
+\caption{Public benchmark coverage reported in the API-Bank paper. MT = multi-turn, MC = multi-call, Resp. = response-level evaluation. This comparison is included to show where NTILC fits in the existing benchmark landscape.}
+\label{tab:benchmark-landscape}
+\end{table}
 
 \section{Experiments}
+\paragraph{Experimental questions.}
+The experiment section for this paper is designed to answer four questions. Does staged retrieval improve tool selection relative to one-shot prompting? Do protocol-constrained dispatch blocks improve command exact match and parseability? Does separating retrieval from generation reduce latency by shrinking the amount of text the model must decode? And where does the system still fail, especially on multi-step requests and out-of-distribution tools? These questions are already aligned with the local evaluation script and do not require redesign, only full execution.
 
-\subsection{Experimental Setting}
-Experiments are conducted using a Qwen-based model trained with LoRA adapters on the constructed dataset. Training and evaluation are performed using GPU infrastructure with consistent hyperparameters across experiments.
+\paragraph{Baseline and metrics.}
+We compare \method\ to a prompt-only baseline built on the same Qwen family model. The baseline reads a serialized tool registry and emits strict JSON with two fields: a tool name and a full shell command. The evaluator measures raw exact match, canonical exact match, command-tool match, retrieval top-1 match, retrieval hit@$k$, strict JSON parse rate, structured-output rate, and end-to-end latency.
 
-\subsubsection{Baselines and Metrics}
-We compare our system to prompt-based tool invocation baselines. Metrics include tool selection accuracy, argument correctness, parsing success rate, and end-to-end task completion.
+\paragraph{Public benchmark context.}
+The local NTILC results are still being finalized, so Tables~\ref{tab:api-bank} and~\ref{tab:bfcl} are included only as external context. They are not direct comparisons: both benchmarks evaluate web APIs or function calling rather than Linux shell commands. I include them here because they show that tool selection and invocation formatting remain difficult even for strong models.
 
-\subsection{Results}
+\begin{table*}[t]
+\centering
+\small
+\setlength{\tabcolsep}{8pt}
+\begin{tabular}{lccc}
+\toprule
+Method & Tool Call & Retrieve+Call & Plan+Retrieve+Call \\
+\midrule
+GPT-4 & 63.66 & 37.04 & 70.00 \\
+GPT-3.5-turbo & 59.40 & 38.52 & 61.00 \\
+Lynx & 74.87 & 24.07 & 37.00 \\
+\bottomrule
+\end{tabular}
+\caption{Representative API-Bank results reported by the API-Bank paper. The table is useful here because it isolates exactly the skills that matter for NTILC: correct tool calling, retrieval-conditioned invocation, and multi-stage planning plus invocation. The numbers are benchmark-specific and are not claimed to be directly comparable to Linux command generation.}
+\label{tab:api-bank}
+\end{table*}
 
-\subsubsection{Benchmark Performance}
-Across multiple benchmarks the proposed architecture demonstrates improved reliability and higher tool selection accuracy relative to prompt-based pipelines.
+\begin{table}[t]
+\centering
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{lc}
+\toprule
+Model & BFCL-v2 Overall \\
+\midrule
+GPT-4-turbo-0409 & 87.65 \\
+Claude-3.5-Sonnet & 85.98 \\
+GPT-4o-0513 & 81.61 \\
+LLaMA-3.1-8B-Instruct & 78.14 \\
+\bottomrule
+\end{tabular}
+\caption{BFCL-v2 overall scores reported in TOOLFLOW using the leaderboard snapshot updated on August 16, 2024. Even on mature function-calling benchmarks, strong models remain meaningfully below perfect execution, which supports the motivation for more structured tool-use pipelines.}
+\label{tab:bfcl}
+\end{table}
 
-\subsubsection{Result Interpretation}
-Separating planning and execution significantly reduces malformed tool calls and improves argument correctness.
+\paragraph{Expected NTILC outcome.}
+The core comparison in this paper is \method\ against the prompt-only JSON baseline under matched base-model and decoding settings. My expectation is that \method\ will improve canonical command exact match, command-tool match, structured-output reliability, and average latency. Retrieval should improve tool selection, protocol-constrained dispatch should improve parseability and exact match, and reduced registry exposure should lower generation cost. I am leaving the local numbers out until the evaluation runs are complete and checked.
 
-\paragraph{Plan Block, Dispatch Block, Response Block}
-Performance improvements are analyzed across three stages: plan generation, dispatch correctness, and final response quality.
+\paragraph{Failure analysis plan.}
+The error analysis should separate failures in planning, retrieval, and dispatch. Some runs will fail because the planner produces non-atomic or incomplete steps. Others will fail because the correct tool is missing from the top-$k$ set or ranked too low. Others will fail because flags, argument order, or path values are wrong even when the tool is correct. That breakdown is one of the practical advantages of the architecture.
 
-\subsubsection{Insights}
-Experimental results suggest that structured intermediate representations improve robustness and scalability.
+\paragraph{Ablations that matter.}
+The most important ablations are already clear. Removing retrieval tests the cost of forcing the model to reason over the full registry. Removing protocol supervision tests whether the structured plan and dispatch targets matter. Disabling retries tests whether top-$k$ retrieval provides real recovery. Comparing overlap and unseen-only splits tests whether the gains come from memorization or routing.
 
-\subsubsection{Limitations}
-Some failure cases remain, particularly for tasks requiring multiple sequential tool calls or ambiguous instructions.
+\paragraph{Planned result tables.}
+When the benchmark is complete, I plan to report retrieval top-1 and hit@$k$ by split, prompt-only versus \method\ on parseability and command accuracy, and latency and retry statistics. That organization should make it easier to attribute gains to retrieval, protocol structure, or both.
 
-\paragraph{New Tool Injection}
-We evaluate system behavior when previously unseen tools are introduced. Embedding-based retrieval allows the system to adapt without retraining.
-
-\subsection{Ablation Studies}
-Ablation experiments evaluate the contribution of each component by removing stages of the orchestration pipeline.
+\paragraph{Scope and limitations.}
+This benchmark studies Linux command generation rather than general API use, so not every public tool-use result transfers directly. At the same time, the shell setting is strict about syntax and easy to score objectively, which makes it useful for systems evaluation. The benchmark may also inherit artifacts from man-page phrasing and synthetic planner supervision, and the final paper should state those limitations directly.
 
 \section{Conclusion}
-Prompt-based tool-use pipelines provide flexibility but introduce structural weaknesses that reduce reliability and scalability. We presented a neural orchestration architecture that separates planning, tool retrieval, argument generation, and execution into explicit stages. Experimental results demonstrate improvements in reliability, tool selection accuracy, and efficiency. These findings suggest that structured orchestration provides a stronger foundation for scalable tool-augmented language model systems.
+\method\ is a concrete proposal for replacing prompt-only Linux tool calling with a staged controller that plans, retrieves, dispatches, validates, and retries explicitly. The codebase already supports the core pieces of that argument: Qwen-based plan and dispatch generation, learned retrieval over tool clusters, validated dispatch, and a prompt-only baseline that makes the comparison fair. The paper's central claim is that this decomposition should outperform one-shot prompting on reliability and efficiency. The remaining work is to finish the benchmark runs, report the numbers cleanly, and convert the current expected-result narrative into a fully empirical one.
 
-\begin{thebibliography}{9}
+\section*{Assumptions and Draft Status}
+This draft is meant to give a concrete picture of the system and the paper direction before the experiments are fully closed out. The main assumptions are that the cleaned Linux benchmark will run cleanly end to end, that \method\ will beat the prompt-only baseline when both use the same Qwen backbone, and that the public benchmark trends from API-Bank and BFCL are directionally relevant even though they are not shell-command benchmarks.
 
-\bibitem{placeholder}
-Placeholder reference.
-
-\end{thebibliography}
+The unfinished part is the empirical section. The evaluation code, baseline, splits, and metrics are already in the repository, but the final local result tables, ablations, and failure analysis are still being completed. This document should therefore be read as a grounded project draft with a real implementation behind it, not yet as a finished empirical paper.
 
 \end{document}
