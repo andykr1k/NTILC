@@ -4,7 +4,13 @@ import unittest
 
 from models.software_layer import DispatchResult
 from orchestrator.agent import NTILCOrchestratorAgent
-from orchestrator.planning import enforce_atomic_actions, parse_plan_block
+from orchestrator.planning import (
+    coerce_action_to_natural_language,
+    enforce_atomic_actions,
+    looks_like_shell_command,
+    normalize_actions_to_natural_language,
+    parse_plan_block,
+)
 from orchestrator.results import RetrievalCandidate
 
 
@@ -122,6 +128,20 @@ class PlanningTests(unittest.TestCase):
         actions = enforce_atomic_actions(parse_plan_block(block))
         self.assertEqual([a.instruction for a in actions], ["make directory", "move text files"])
 
+    def test_detects_and_rewrites_shell_command_actions(self):
+        self.assertTrue(looks_like_shell_command("grep -R cuda ."))
+        self.assertEqual(
+            coerce_action_to_natural_language("grep -R cuda ."),
+            "search for matching text recursively",
+        )
+
+    def test_normalizes_shell_command_actions_before_atomic_split(self):
+        actions = normalize_actions_to_natural_language(
+            parse_plan_block("<plan><action>grep -R cuda .</action></plan>"),
+            fallback_request="search recursively for cuda references",
+        )
+        self.assertEqual([a.instruction for a in actions], ["search for matching text recursively"])
+
 
 class RuntimeFlowTests(unittest.TestCase):
     def test_retry_then_success_with_single_action(self):
@@ -236,6 +256,78 @@ class RuntimeFlowTests(unittest.TestCase):
         self.assertEqual(len(run.steps), 1)
         self.assertEqual(run.steps[0].command, "grep -n error")
         self.assertEqual(run.steps[0].dispatch_arguments.get("query"), "search logs")
+
+    def test_command_like_plan_action_is_normalized_before_retrieval(self):
+        retrieval = _FakeRetrievalSystem(
+            {
+                "search for matching text recursively": [
+                    RetrievalCandidate(cluster_id=30, score=0.92, tool_name="grep")
+                ],
+            }
+        )
+        dispatcher = _SequenceDispatcher(
+            [
+                DispatchResult(
+                    ok=True,
+                    tool="grep",
+                    arguments={"command": "grep -R error ."},
+                    cluster_id=30,
+                    result=None,
+                    errors=[],
+                    executed=False,
+                )
+            ]
+        )
+
+        class _CommandLikePlanModel:
+            def generate_plan_actions(
+                self,
+                request: str,
+                max_actions: int = 8,
+                max_new_tokens: int = 256,
+                temperature: float = 0.0,
+                top_p: float = 1.0,
+            ):
+                del request, max_actions, max_new_tokens, temperature, top_p
+                return {
+                    "actions": ["grep -R error ."],
+                    "plan_block": "<plan><action>grep -R error .</action></plan>",
+                    "raw_text": "",
+                    "raw_token_ids": [],
+                }
+
+            def generate_dispatch_arguments(
+                self,
+                query: str,
+                tool: str,
+                max_new_tokens: int = 128,
+                temperature: float = 0.0,
+                top_p: float = 1.0,
+                current_action=None,
+                prior_step_summaries=None,
+            ):
+                del query, max_new_tokens, temperature, top_p, current_action, prior_step_summaries
+                return {
+                    "arguments": {"command": f"{tool} -R error .", "query": "search logs"},
+                    "generated_text": f"{tool} -R error .",
+                    "command": f"{tool} -R error .",
+                    "raw_text": "",
+                    "raw_token_ids": [],
+                }
+
+        agent = NTILCOrchestratorAgent(
+            retrieval_system=retrieval,
+            dispatcher=dispatcher,
+            qwen_model=_CommandLikePlanModel(),
+        )
+        run = agent.run(request="search logs", execute_tools=False, max_retries=1)
+
+        self.assertTrue(run.success)
+        self.assertEqual(
+            [a["instruction"] for a in run.atomic_actions],
+            ["search for matching text recursively"],
+        )
+        self.assertEqual(run.steps[0].action_text, "search for matching text recursively")
 
 
 class CompatibilityTests(unittest.TestCase):

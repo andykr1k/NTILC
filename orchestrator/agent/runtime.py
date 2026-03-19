@@ -10,6 +10,7 @@ from orchestrator.planning import (
     PlanAction,
     actions_to_instruction_list,
     enforce_atomic_actions,
+    normalize_actions_to_natural_language,
     parse_plan_block,
     salvage_plan_actions,
 )
@@ -130,7 +131,11 @@ class NTILCOrchestratorAgent:
             except ValueError:
                 parsed_actions = salvage_plan_actions(raw_plan_block, fallback_request=request)
 
-        atomic_actions = enforce_atomic_actions(parsed_actions)
+        normalized_actions = normalize_actions_to_natural_language(
+            parsed_actions,
+            fallback_request=request,
+        )
+        atomic_actions = enforce_atomic_actions(normalized_actions)
         if not atomic_actions:
             atomic_actions = salvage_plan_actions(request, fallback_request=request)
         if not atomic_actions:

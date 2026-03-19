@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import shlex
-from typing import Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from orchestrator.protocol import (
     ACTION_END,
@@ -22,34 +22,50 @@ from orchestrator.protocol import (
 )
 
 
-def build_plan_prompt(request: str, max_actions: int) -> str:
+def build_plan_messages(request: str, max_actions: int) -> list[dict[str, str]]:
     req = str(request).strip()
     limit = max(1, int(max_actions))
-    return (
-        "You are a Linux tool-use planner.\n"
-        "Return only protocol tags and payload text.\n"
-        "Use this exact schema:\n"
+    user_prompt = (
+        "## Output Format\n"
+        f"Respond using only these tags — no commentary, no code, no prose outside them:\n"
         f"{PLAN_START}\n"
-        f"  {ACTION_START}atomic action text{ACTION_END}\n"
+        f"  {ACTION_START}one atomic action as natural-language intent{ACTION_END}\n"
         f"{PLAN_END}\n\n"
-        "Rules:\n"
+        "## Rules\n"
         f"- Output at most {limit} actions.\n"
-        "- Each action must be atomic and executable by one tool call.\n"
-        "- Split combined tasks into multiple actions.\n"
-        "- Preserve execution order.\n"
-        "- Do not include commentary.\n\n"
-        f"User request: {req}\n"
-        "Plan:"
+        "- Each action must map to exactly one tool call.\n"
+        "- Write intent, not implementation — no commands, flags, paths, pipes, or code.\n"
+        "- Split compound tasks into separate actions.\n"
+        "- Preserve execution order.\n\n"
+        "## Examples\n"
+        "✓ `search for lines matching a pattern recursively in the current directory`\n"
+        "✗ `grep -R pattern .`\n"
+        "✓ `count the number of lines in the output file`\n"
+        "✗ `wc -l output.txt`\n\n"
+        f"## Request\n"
+        f"{req}\n\n"
+        "## Plan"
     )
+    return [
+        {
+            "role": "system",
+            "content": "You are a Linux task planner. Decompose a user request into ordered, atomic actions.",
+        },
+        {"role": "user", "content": user_prompt},
+    ]
 
 
-def build_dispatch_prompt(
+def build_plan_prompt(request: str, max_actions: int) -> str:
+    messages = build_plan_messages(request=request, max_actions=max_actions)
+    return f"{messages[0]['content']}\n\n{messages[1]['content']}"
+
+def build_dispatch_messages(
     query: str,
     tool: str,
     mode: str,
     current_action: Optional[str] = None,
     prior_step_summaries: Optional[Sequence[str]] = None,
-) -> str:
+) -> list[dict[str, str]]:
     history_lines = [f"- {line}" for line in (prior_step_summaries or []) if str(line).strip()]
     history_block = "\n".join(history_lines) if history_lines else "- none"
     action_text = str(current_action).strip() if current_action else str(query).strip()
@@ -60,8 +76,7 @@ def build_dispatch_prompt(
         else "Set key `command` to command tail only (arguments/values), without the tool name."
     )
 
-    return (
-        "You map an atomic Linux action to structured dispatch arguments.\n"
+    user_prompt = (
         "Return only protocol tags and payload text using this exact schema:\n"
         f"{DISPATCH_START}"
         f"{ARG_START}{KEY_START}command{KEY_END}{VALUE_START}<payload>{VALUE_END}{ARG_END}"
@@ -76,6 +91,27 @@ def build_dispatch_prompt(
         f"Prior step summaries:\n{history_block}\n"
         "Dispatch:"
     )
+    return [
+        {"role": "system", "content": "You map an atomic Linux action to structured dispatch arguments."},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+def build_dispatch_prompt(
+    query: str,
+    tool: str,
+    mode: str,
+    current_action: Optional[str] = None,
+    prior_step_summaries: Optional[Sequence[str]] = None,
+) -> str:
+    messages = build_dispatch_messages(
+        query=query,
+        tool=tool,
+        mode=mode,
+        current_action=current_action,
+        prior_step_summaries=prior_step_summaries,
+    )
+    return f"{messages[0]['content']}\n\n{messages[1]['content']}"
 
 
 def build_command_prompt(
@@ -92,6 +128,80 @@ def build_command_prompt(
         mode=mode,
         current_action=current_action,
         prior_step_summaries=prior_step_summaries,
+    )
+
+
+def render_chat_prompt(
+    tokenizer: Any,
+    messages: Sequence[Mapping[str, Any]],
+    fallback_prompt: str,
+    enable_thinking: bool = False,
+) -> str:
+    apply_chat_template = getattr(tokenizer, "apply_chat_template", None)
+    if not callable(apply_chat_template):
+        return str(fallback_prompt)
+
+    template_kwargs = {
+        "tokenize": False,
+        "add_generation_prompt": True,
+    }
+    normalized_messages = [dict(message) for message in messages]
+
+    try:
+        return str(
+            apply_chat_template(
+                normalized_messages,
+                enable_thinking=enable_thinking,
+                **template_kwargs,
+            )
+        )
+    except TypeError:
+        try:
+            return str(apply_chat_template(normalized_messages, **template_kwargs))
+        except Exception:
+            return str(fallback_prompt)
+    except Exception:
+        return str(fallback_prompt)
+
+
+def build_plan_model_input(tokenizer: Any, request: str, max_actions: int) -> str:
+    messages = build_plan_messages(request=request, max_actions=max_actions)
+    fallback_prompt = build_plan_prompt(request=request, max_actions=max_actions)
+    return render_chat_prompt(
+        tokenizer=tokenizer,
+        messages=messages,
+        fallback_prompt=fallback_prompt,
+        enable_thinking=False,
+    )
+
+
+def build_dispatch_model_input(
+    tokenizer: Any,
+    query: str,
+    tool: str,
+    mode: str,
+    current_action: Optional[str] = None,
+    prior_step_summaries: Optional[Sequence[str]] = None,
+) -> str:
+    messages = build_dispatch_messages(
+        query=query,
+        tool=tool,
+        mode=mode,
+        current_action=current_action,
+        prior_step_summaries=prior_step_summaries,
+    )
+    fallback_prompt = build_dispatch_prompt(
+        query=query,
+        tool=tool,
+        mode=mode,
+        current_action=current_action,
+        prior_step_summaries=prior_step_summaries,
+    )
+    return render_chat_prompt(
+        tokenizer=tokenizer,
+        messages=messages,
+        fallback_prompt=fallback_prompt,
+        enable_thinking=False,
     )
 
 

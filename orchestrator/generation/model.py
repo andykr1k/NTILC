@@ -16,8 +16,8 @@ from orchestrator.protocol import (
 )
 
 from .prompting import (
-    build_dispatch_prompt,
-    build_plan_prompt,
+    build_dispatch_model_input,
+    build_plan_model_input,
     extract_plan_block,
     normalize_command_for_tool,
     safe_first_line,
@@ -142,6 +142,7 @@ class QwenOrchestratorModel:
         temperature: float,
         top_p: float,
         stop_token_id: Optional[int] = None,
+        include_eos_token: bool = True,
     ) -> List[int]:
         encoded = self.tokenizer(
             prompt,
@@ -151,7 +152,7 @@ class QwenOrchestratorModel:
         ).to(self.device)
 
         eos_ids: List[int] = []
-        if getattr(self.tokenizer, "eos_token_id", None) is not None:
+        if include_eos_token and getattr(self.tokenizer, "eos_token_id", None) is not None:
             eos_ids.append(int(self.tokenizer.eos_token_id))
         if stop_token_id is not None and int(stop_token_id) >= 0:
             token_id = int(stop_token_id)
@@ -177,6 +178,21 @@ class QwenOrchestratorModel:
             return ""
         return str(self.tokenizer.decode(list(token_ids), skip_special_tokens=False)).strip()
 
+    def _is_immediate_eos(self, token_ids: Sequence[int]) -> bool:
+        ids = [int(tok) for tok in token_ids]
+        if not ids:
+            return False
+
+        eos_token_id = getattr(self.tokenizer, "eos_token_id", None)
+        if eos_token_id is not None and all(tok == int(eos_token_id) for tok in ids):
+            return True
+
+        eos_token = str(getattr(self.tokenizer, "eos_token", "") or "").strip()
+        if eos_token:
+            decoded = self._decode_ids(ids)
+            return bool(decoded) and decoded == eos_token
+        return False
+
     def generate_plan_actions(
         self,
         request: str,
@@ -185,7 +201,11 @@ class QwenOrchestratorModel:
         temperature: float = 0.0,
         top_p: float = 1.0,
     ) -> Dict[str, Any]:
-        prompt = build_plan_prompt(request=request, max_actions=max_actions)
+        prompt = build_plan_model_input(
+            tokenizer=self.tokenizer,
+            request=request,
+            max_actions=max_actions,
+        )
         token_ids = self._generate_token_ids(
             prompt=prompt,
             max_new_tokens=max_new_tokens,
@@ -199,12 +219,27 @@ class QwenOrchestratorModel:
             generated_token_ids=token_ids,
             token_ids=self.protocol_token_ids,
         )
+        if not actions and self._is_immediate_eos(token_ids):
+            token_ids = self._generate_token_ids(
+                prompt=prompt,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                stop_token_id=self.protocol_token_ids.plan_end,
+                include_eos_token=False,
+            )
+            actions = extract_plan_actions_from_ids(
+                tokenizer=self.tokenizer,
+                generated_token_ids=token_ids,
+                token_ids=self.protocol_token_ids,
+            )
         if actions:
             plan_block = build_plan_block(actions)
             raw_text = self._decode_ids(token_ids)
             return {
                 "actions": actions,
                 "plan_block": plan_block,
+                "prompt": prompt,
                 "raw_text": raw_text,
                 "raw_token_ids": token_ids,
             }
@@ -213,6 +248,7 @@ class QwenOrchestratorModel:
         return {
             "actions": [],
             "plan_block": extract_plan_block(raw_text),
+            "prompt": prompt,
             "raw_text": raw_text,
             "raw_token_ids": token_ids,
         }
@@ -244,7 +280,8 @@ class QwenOrchestratorModel:
         current_action: Optional[str] = None,
         prior_step_summaries: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
-        prompt = build_dispatch_prompt(
+        prompt = build_dispatch_model_input(
+            tokenizer=self.tokenizer,
             query=query,
             tool=tool,
             mode=self.mode,
@@ -264,6 +301,20 @@ class QwenOrchestratorModel:
             generated_token_ids=token_ids,
             token_ids=self.protocol_token_ids,
         )
+        if not arguments and self._is_immediate_eos(token_ids):
+            token_ids = self._generate_token_ids(
+                prompt=prompt,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                stop_token_id=self.protocol_token_ids.dispatch_end,
+                include_eos_token=False,
+            )
+            arguments = extract_dispatch_arguments_from_ids(
+                tokenizer=self.tokenizer,
+                generated_token_ids=token_ids,
+                token_ids=self.protocol_token_ids,
+            )
 
         generated_command_payload = str(arguments.get("command", "")).strip()
         if generated_command_payload:
@@ -284,6 +335,7 @@ class QwenOrchestratorModel:
             "arguments": arguments,
             "generated_text": generated_command_payload,
             "command": str(arguments.get("command", "")).strip(),
+            "prompt": prompt,
             "raw_text": raw_text,
             "raw_token_ids": token_ids,
         }
