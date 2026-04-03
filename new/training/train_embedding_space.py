@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         type=str,
         default="/scratch4/home/akrik/NTILC/data/ToolVerifier/output",
-        help="Where to save checkpoints and metrics.",
+        help="Base directory where checkpoints and metrics are saved under a loss-specific subdirectory.",
     )
     parser.add_argument(
         "--encoder-model",
@@ -92,7 +92,32 @@ def parse_args() -> argparse.Namespace:
         "--alignment-weight",
         type=float,
         default=0.2,
-        help="Extra weight that pulls samples toward their tool prototype.",
+        help="Extra weight that pulls samples toward their tool prototype in the current loss.",
+    )
+    parser.add_argument(
+        "--loss-type",
+        type=str,
+        default="contrastive",
+        choices=("current", "contrastive", "circle"),
+        help="Training loss to use: the current prototype classification loss, contrastive loss, or circle loss.",
+    )
+    parser.add_argument(
+        "--contrastive-margin",
+        type=float,
+        default=0.5,
+        help="Margin used by the contrastive loss on cosine distance.",
+    )
+    parser.add_argument(
+        "--circle-margin",
+        type=float,
+        default=0.25,
+        help="Margin used by the circle loss.",
+    )
+    parser.add_argument(
+        "--circle-gamma",
+        type=float,
+        default=32.0,
+        help="Scale factor used by the circle loss.",
     )
     parser.add_argument(
         "--freeze-encoder",
@@ -281,22 +306,93 @@ def build_collate_fn(tokenizer, max_length: int):
     return collate
 
 
+def prototype_similarities(
+    model: SimpleToolEmbeddingModel,
+    embeddings: torch.Tensor,
+    labels: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    prototypes = F.normalize(model.tool_prototypes, dim=-1)
+    similarities = embeddings @ prototypes.T
+    positive_similarities = similarities.gather(1, labels.unsqueeze(1)).squeeze(1)
+
+    negative_mask = torch.ones_like(similarities, dtype=torch.bool)
+    negative_mask.scatter_(1, labels.unsqueeze(1), False)
+    negative_similarities = similarities[negative_mask].view(similarities.size(0), -1)
+    return prototypes, positive_similarities, negative_similarities
+
+
 def compute_loss(
     model: SimpleToolEmbeddingModel,
     embeddings: torch.Tensor,
     logits: torch.Tensor,
     labels: torch.Tensor,
+    loss_type: str,
     alignment_weight: float,
+    contrastive_margin: float,
+    circle_margin: float,
+    circle_gamma: float,
 ) -> tuple[torch.Tensor, Dict[str, float]]:
-    cross_entropy = F.cross_entropy(logits, labels)
-    prototypes = F.normalize(model.tool_prototypes, dim=-1)
-    matched = prototypes[labels]
-    alignment = (1.0 - (embeddings * matched).sum(dim=-1)).mean()
-    loss = cross_entropy + alignment_weight * alignment
-    return loss, {
-        "cross_entropy": float(cross_entropy.detach().cpu()),
-        "alignment": float(alignment.detach().cpu()),
-    }
+    prototypes, positive_similarities, negative_similarities = prototype_similarities(
+        model=model,
+        embeddings=embeddings,
+        labels=labels,
+    )
+
+    if loss_type == "current":
+        cross_entropy = F.cross_entropy(logits, labels)
+        matched = prototypes[labels]
+        alignment = (1.0 - (embeddings * matched).sum(dim=-1)).mean()
+        loss = cross_entropy + alignment_weight * alignment
+        return loss, {
+            "cross_entropy": float(cross_entropy.detach().cpu()),
+            "alignment": float(alignment.detach().cpu()),
+        }
+
+    if loss_type == "contrastive":
+        positive_distances = 1.0 - positive_similarities
+        positive_loss = positive_distances.pow(2).mean()
+
+        if negative_similarities.numel() == 0:
+            negative_loss = embeddings.new_zeros(())
+            active_negative_margin = embeddings.new_zeros(())
+        else:
+            negative_distances = 1.0 - negative_similarities
+            negative_margin = F.relu(contrastive_margin - negative_distances)
+            negative_loss = negative_margin.pow(2).mean()
+            active_negative_margin = negative_margin.mean()
+
+        loss = positive_loss + negative_loss
+        return loss, {
+            "positive_distance": float(positive_distances.mean().detach().cpu()),
+            "active_negative_margin": float(active_negative_margin.detach().cpu()),
+        }
+
+    if loss_type == "circle":
+        op = 1.0 + circle_margin
+        on = -circle_margin
+        delta_p = 1.0 - circle_margin
+        delta_n = circle_margin
+
+        alpha_p = F.relu(op - positive_similarities.detach())
+        positive_logits = -circle_gamma * alpha_p * (positive_similarities - delta_p)
+        positive_term = torch.logsumexp(positive_logits.unsqueeze(1), dim=1)
+
+        if negative_similarities.numel() == 0:
+            loss = F.softplus(positive_term).mean()
+            hardest_negative = embeddings.new_zeros(())
+        else:
+            alpha_n = F.relu(negative_similarities.detach() - on)
+            negative_logits = circle_gamma * alpha_n * (negative_similarities - delta_n)
+            negative_term = torch.logsumexp(negative_logits, dim=1)
+            loss = F.softplus(positive_term + negative_term).mean()
+            hardest_negative = negative_similarities.max(dim=1).values.mean()
+
+        return loss, {
+            "positive_similarity": float(positive_similarities.mean().detach().cpu()),
+            "hardest_negative_similarity": float(hardest_negative.detach().cpu()),
+        }
+
+    raise ValueError(f"Unsupported loss type: {loss_type}")
 
 
 @torch.inference_mode()
@@ -487,7 +583,8 @@ def main() -> None:
     torch.manual_seed(args.seed)
 
     dataset_path = Path(args.dataset_path)
-    output_dir = Path(args.output_dir)
+    output_dir = Path(args.output_dir) / args.loss_type
+    args.output_dir = str(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     rows = clean_rows(load_jsonl(dataset_path))
@@ -496,12 +593,16 @@ def main() -> None:
 
     tool_names = sorted({row["tool"] for row in rows})
     tool_to_index = {tool: index for index, tool in enumerate(tool_names)}
+    if args.loss_type in {"contrastive", "circle"} and len(tool_names) < 2:
+        raise ValueError(f"{args.loss_type} loss requires at least two distinct tools.")
     train_rows, val_rows = stratified_split(rows, args.val_ratio, args.seed)
 
     print(f"Loaded {len(rows)} rows from {dataset_path}")
     print(f"Tools: {len(tool_names)}")
     print(f"Train rows: {len(train_rows)}")
     print(f"Validation rows: {len(val_rows)}")
+    print(f"Loss: {args.loss_type}")
+    print(f"Output dir: {output_dir}")
 
     device = choose_device(args.device)
     tokenizer = build_tokenizer(args.encoder_model)
@@ -571,7 +672,11 @@ def main() -> None:
                 embeddings=embeddings,
                 logits=logits,
                 labels=labels,
+                loss_type=args.loss_type,
                 alignment_weight=args.alignment_weight,
+                contrastive_margin=args.contrastive_margin,
+                circle_margin=args.circle_margin,
+                circle_gamma=args.circle_gamma,
             )
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
