@@ -5,7 +5,9 @@ import random
 import re
 from pathlib import Path
 from typing import Any, Dict, List
+import outlines
 import torch
+from pydantic import BaseModel, Field, create_model
 from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -21,19 +23,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--tools-path",
         type=str,
-        default="/scratch4/home/akrik/NTILC/data/ToolCall15/tools.json",
+        default="/scratch4/home/akrik/NTILC/data/ToolVerifier/tools.json",
         help="Path to the tools.json file.",
     )
     parser.add_argument(
         "--output-path",
         type=str,
-        default="/scratch4/home/akrik/NTILC/data/ToolCall15/tool_embedding_dataset.jsonl",
+        default="/scratch4/home/akrik/NTILC/data/ToolVerifier/tool_embedding_dataset.jsonl",
         help="Path to the output JSONL dataset.",
     )
     parser.add_argument(
         "--summary-path",
         type=str,
-        default="/scratch4/home/akrik/NTILC/data/ToolCall15/tool_embedding_dataset_summary.json",
+        default="/scratch4/home/akrik/NTILC/data/ToolVerifier/tool_embedding_dataset_summary.json",
         help="Path to a small metadata summary JSON file.",
     )
     parser.add_argument(
@@ -87,7 +89,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--device",
         type=str,
-        default="cuda:2",
+        default="cuda:3",
         help="Device for generation. Use auto, cuda, cuda:0, or cpu.",
     )
     parser.add_argument(
@@ -143,13 +145,13 @@ Parameters:
 {parameter_text}
 
 Requirements:
+- The response must contain exactly {count} requests.
 - The request should clearly map to this tool.
 - Keep the language simple and direct.
 - Vary names, locations, dates, numbers, and phrasing.
 - Some requests can mention optional parameters when relevant.
 - Avoid duplicates.
-- Each user request should start with <request> and end with </request>
-- Only output the requests"""
+- Each item in requests should be a standalone natural user request."""
 
 
 def normalize_query(text: str) -> str:
@@ -169,12 +171,11 @@ def unique_preserve_order(items: List[str]) -> List[str]:
     return result
 
 
-def parse_generated_queries(raw_text: str) -> List[str]:
-    parts = raw_text.split("</think>")
-    post_think_text = parts[-1]
-    matches = re.findall(r"<request>(.*?)</request>", post_think_text, flags=re.DOTALL)
-    queries = [normalize_query(match) for match in matches if normalize_query(match)]
-    return unique_preserve_order(queries)
+def build_query_output_model(query_count: int) -> type[BaseModel]:
+    return create_model(
+        f"GeneratedQueries_{query_count}",
+        requests=(List[str], Field(..., min_length=query_count, max_length=query_count)),
+    )
 
 
 def resolve_dtype(dtype_name: str, device: str) -> torch.dtype:
@@ -196,7 +197,7 @@ def load_generator(model_name: str, device: str, dtype: str):
 
     model_kwargs: Dict[str, Any] = {
         "trust_remote_code": True,
-        "torch_dtype": resolve_dtype(dtype, device),
+        "dtype": resolve_dtype(dtype, device),
     }
     if device == "auto":
         model_kwargs["device_map"] = "auto"
@@ -205,49 +206,50 @@ def load_generator(model_name: str, device: str, dtype: str):
     if device != "auto":
         model = model.to(device)
     model.eval()
-    return tokenizer, model
+
+    structured_model = outlines.from_transformers(model, tokenizer)
+    return tokenizer, structured_model
 
 
 @torch.inference_mode()
 def generate_queries(
-    model: AutoModelForCausalLM,
+    structured_model,
+    generator_cache: Dict[int, Any],
     tokenizer: AutoTokenizer,
     prompt: str,
+    query_count: int,
     max_new_tokens: int,
     temperature: float,
     top_p: float,
-    device: str,
-) -> str:
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": prompt},
-    ]
+) -> List[str]:
+    output_model, query_generator = generator_cache.get(query_count, (None, None))
+    if output_model is None or query_generator is None:
+        output_model = build_query_output_model(query_count)
+        query_generator = outlines.Generator(structured_model, output_model)
+        generator_cache[query_count] = (output_model, query_generator)
 
-    if hasattr(tokenizer, "apply_chat_template"):
-        text = tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
+    full_prompt = f"{SYSTEM_PROMPT}\n\n{prompt}"
+    generation_kwargs: Dict[str, Any] = {
+        "max_new_tokens": max_new_tokens,
+        "pad_token_id": tokenizer.pad_token_id,
+        "eos_token_id": tokenizer.eos_token_id,
+    }
+    if temperature > 0:
+        generation_kwargs.update(
+            {
+                "do_sample": True,
+                "temperature": temperature,
+                "top_p": top_p,
+            }
         )
     else:
-        text = f"{SYSTEM_PROMPT}\n\n{prompt}"
+        generation_kwargs["do_sample"] = False
 
-    encoded = tokenizer(text, return_tensors="pt")
-    if device != "auto":
-        encoded = {key: value.to(device) for key, value in encoded.items()}
-
-    generated = model.generate(
-        **encoded,
-        max_new_tokens=max_new_tokens,
-        do_sample=temperature > 0,
-        temperature=temperature,
-        top_p=top_p,
-        pad_token_id=tokenizer.pad_token_id,
-        eos_token_id=tokenizer.eos_token_id,
+    raw_output = query_generator(full_prompt, **generation_kwargs)
+    parsed_output = output_model.model_validate_json(raw_output)
+    return unique_preserve_order(
+        [normalize_query(query) for query in parsed_output.requests if normalize_query(query)]
     )
-    prompt_tokens = encoded["input_ids"].shape[1]
-    new_tokens = generated[0][prompt_tokens:]
-    return tokenizer.decode(new_tokens, skip_special_tokens=True)
 
 
 def main() -> None:
@@ -262,7 +264,8 @@ def main() -> None:
     summary_path.parent.mkdir(parents=True, exist_ok=True)
 
     tools = load_tools(tools_path)
-    tokenizer, model = load_generator(args.model_name, args.device, args.dtype)
+    tokenizer, structured_model = load_generator(args.model_name, args.device, args.dtype)
+    generator_cache: Dict[int, Any] = {}
 
     rows: List[Dict[str, Any]] = []
     per_tool_counts: Dict[str, int] = {}
@@ -287,16 +290,16 @@ def main() -> None:
                 args.examples_per_tool - len(collected),
             )
             prompt = build_prompt(tool, needed)
-            raw_output = generate_queries(
-                model=model,
+            queries = generate_queries(
+                structured_model=structured_model,
+                generator_cache=generator_cache,
                 tokenizer=tokenizer,
                 prompt=prompt,
+                query_count=needed,
                 max_new_tokens=args.max_new_tokens,
                 temperature=args.temperature,
                 top_p=args.top_p,
-                device=args.device,
             )
-            queries = parse_generated_queries(raw_output)
             previous_count = len(collected)
             collected = unique_preserve_order(collected + queries)
             query_progress.update(len(collected) - previous_count)

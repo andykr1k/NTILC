@@ -12,9 +12,6 @@ from pydantic import BaseModel, Field
 from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-
-DEFAULT_TOOLS_PATH = Path("/scratch4/home/akrik/NTILC/data/ToolVerifier/tools.csv")
-DEFAULT_OUTPUT_PATH = Path("/scratch4/home/akrik/NTILC/data/ToolVerifier/tool.json")
 SYSTEM_PROMPT = "You create short, realistic tool schemas."
 
 
@@ -40,13 +37,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--tools-path",
         type=str,
-        default=str(DEFAULT_TOOLS_PATH),
+        default="/scratch4/home/akrik/NTILC/data/ToolVerifier/tools.csv",
         help="Path to the source CSV with Name and Description columns.",
     )
     parser.add_argument(
         "--output-path",
         type=str,
-        default=str(DEFAULT_OUTPUT_PATH),
+        default="/scratch4/home/akrik/NTILC/data/ToolVerifier/tools.json",
         help="Path to the output JSON file.",
     )
     parser.add_argument(

@@ -19,13 +19,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dataset-path",
         type=str,
-        default="/scratch4/home/akrik/NTILC/data/ToolCall15/tool_embedding_dataset.jsonl",
+        default="/scratch4/home/akrik/NTILC/data/ToolVerifier/tool_embedding_dataset.jsonl",
         help="Path to the synthetic tool dataset.",
     )
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="/scratch4/home/akrik/NTILC/data/ToolCall15/output",
+        default="/scratch4/home/akrik/NTILC/data/ToolVerifier/output",
         help="Where to save checkpoints and metrics.",
     )
     parser.add_argument(
@@ -108,7 +108,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--device",
         type=str,
-        default="cuda:2",
+        default="cuda:3",
         help="Use auto, cuda, cuda:0, or cpu.",
     )
     return parser.parse_args()
