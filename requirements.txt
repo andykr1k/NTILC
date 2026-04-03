@@ -2,6 +2,8 @@ torch
 transformers
 tokenizers
 datasets
+pydantic
+outlines
 wandb
 streamlit
 faker

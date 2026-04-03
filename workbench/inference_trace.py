@@ -15,7 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from test import (
+from old.test import (
     DEFAULT_LORA_ADAPTER,
     DEFAULT_RAW_TOOLS_JSON,
     DEFAULT_RETRIEVAL_CKPT,
