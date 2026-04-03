@@ -67,7 +67,6 @@ wandb/
 .wandb/
 
 # Analysis outputs
-analysis/
 *.png
 *.jpg
 *.pdf
