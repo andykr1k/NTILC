@@ -171,7 +171,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--device",
         type=str,
-        default="cuda:3",
+        default="cuda:4",
         help="Use auto, cuda, cuda:0, or cpu.",
     )
     add_wandb_arguments(parser)
