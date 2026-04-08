@@ -89,3 +89,5 @@ wandb/
 *.fls
 *.fdb_latexmk
 *.gz
+
+__old__
