@@ -10,6 +10,12 @@ npm install
 npm run dev
 ```
 
+Set the production URL for canonical tags, sitemap entries, and social metadata:
+
+```bash
+cp .env.example .env.local
+```
+
 The app reads generated registry artifacts from `../registry/generated/`, so run
 the registry builder first:
 

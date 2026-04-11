@@ -1,6 +1,7 @@
 "use client";
 
 import { useDeferredValue, useState } from "react";
+import { HUGGING_FACE_ORG_URL } from "@/lib/seo";
 import type { ModelRelease } from "@/lib/types";
 
 type ModelBrowserProps = {
@@ -36,7 +37,7 @@ export function ModelBrowser({ releases }: ModelBrowserProps) {
 
   return (
     <div className="space-y-6">
-      <section className="panel rounded-[1.8rem] px-5 py-5 sm:px-6">
+      <section className="panel reveal delay-1 rounded-none px-5 py-5 sm:px-6">
         <div className="grid gap-4 xl:grid-cols-[1.5fr_0.9fr_0.8fr_0.8fr]">
           <label className="space-y-2">
             <span className="text-sm font-semibold uppercase tracking-[0.15em] text-[color:var(--muted)]">Search</span>
@@ -44,7 +45,7 @@ export function ModelBrowser({ releases }: ModelBrowserProps) {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="search variants, encoders, or dataset versions"
-              className="w-full rounded-2xl border border-[color:var(--line)] bg-white/80 px-4 py-3 outline-none focus:border-[color:var(--accent)]"
+              className="w-full rounded-none border border-[color:var(--line)] bg-[rgba(8,15,24,0.8)] px-4 py-3 font-mono text-sm text-[color:var(--ink)] outline-none focus:border-[color:var(--accent)]"
             />
           </label>
           <label className="space-y-2">
@@ -52,7 +53,7 @@ export function ModelBrowser({ releases }: ModelBrowserProps) {
             <select
               value={architecture}
               onChange={(event) => setArchitecture(event.target.value)}
-              className="w-full rounded-2xl border border-[color:var(--line)] bg-white/80 px-4 py-3 outline-none focus:border-[color:var(--accent)]"
+              className="w-full rounded-none border border-[color:var(--line)] bg-[rgba(8,15,24,0.8)] px-4 py-3 text-sm text-[color:var(--ink)] outline-none focus:border-[color:var(--accent)]"
             >
               <option value="all">All architectures</option>
               <option value="normal">Normal</option>
@@ -64,7 +65,7 @@ export function ModelBrowser({ releases }: ModelBrowserProps) {
             <select
               value={loss}
               onChange={(event) => setLoss(event.target.value)}
-              className="w-full rounded-2xl border border-[color:var(--line)] bg-white/80 px-4 py-3 outline-none focus:border-[color:var(--accent)]"
+              className="w-full rounded-none border border-[color:var(--line)] bg-[rgba(8,15,24,0.8)] px-4 py-3 text-sm text-[color:var(--ink)] outline-none focus:border-[color:var(--accent)]"
             >
               <option value="all">All losses</option>
               <option value="prototype_ce">prototype_ce</option>
@@ -77,7 +78,7 @@ export function ModelBrowser({ releases }: ModelBrowserProps) {
             <select
               value={status}
               onChange={(event) => setStatus(event.target.value)}
-              className="w-full rounded-2xl border border-[color:var(--line)] bg-white/80 px-4 py-3 outline-none focus:border-[color:var(--accent)]"
+              className="w-full rounded-none border border-[color:var(--line)] bg-[rgba(8,15,24,0.8)] px-4 py-3 text-sm text-[color:var(--ink)] outline-none focus:border-[color:var(--accent)]"
             >
               <option value="all">All statuses</option>
               <option value="published">Published</option>
@@ -92,10 +93,14 @@ export function ModelBrowser({ releases }: ModelBrowserProps) {
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
-        {filteredReleases.map((release) => {
+        {filteredReleases.map((release, index) => {
           const metricEntries = Object.entries(release.metrics);
           return (
-            <article key={release.id} className="panel rounded-[1.7rem] px-5 py-6">
+            <article
+              key={release.id}
+              className={`panel steel-card reveal rounded-none px-5 py-6 ${index % 2 === 1 ? "lg:translate-y-10" : ""}`}
+              style={{ animationDelay: `${140 + (index % 6) * 60}ms` }}
+            >
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="eyebrow">{release.architecture}</p>
@@ -148,23 +153,23 @@ export function ModelBrowser({ releases }: ModelBrowserProps) {
                     href={release.download_url}
                     target="_blank"
                     rel="noreferrer"
-                    className="rounded-full bg-[color:var(--accent-strong)] px-4 py-2 font-semibold text-white shadow-lg shadow-orange-900/15"
+                    className="primary-button rounded-none px-4 py-2 font-semibold uppercase tracking-[0.14em]"
                   >
                     Download checkpoint
                   </a>
                 ) : (
-                  <span className="rounded-full border border-dashed border-[color:var(--line)] px-4 py-2 font-semibold text-[color:var(--muted)]">
+                  <span className="border border-dashed border-[color:var(--line)] px-4 py-2 font-semibold uppercase tracking-[0.14em] text-[color:var(--muted)]">
                     Awaiting artifact
                   </span>
                 )}
-                {release.repository_url ? (
+                {release.repository_url || HUGGING_FACE_ORG_URL ? (
                   <a
-                    href={release.repository_url}
+                    href={release.repository_url || HUGGING_FACE_ORG_URL}
                     target="_blank"
                     rel="noreferrer"
                     className="font-semibold text-[color:var(--accent-strong)]"
                   >
-                    Model repository
+                    View on Hugging Face
                   </a>
                 ) : null}
               </div>
@@ -174,7 +179,7 @@ export function ModelBrowser({ releases }: ModelBrowserProps) {
       </section>
 
       {!filteredReleases.length ? (
-        <section className="panel rounded-[1.8rem] px-6 py-8 text-center text-[color:var(--muted)]">
+        <section className="panel rounded-none px-6 py-8 text-center text-[color:var(--muted)]">
           No model releases matched the current filters.
         </section>
       ) : null}

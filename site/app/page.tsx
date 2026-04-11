@@ -1,184 +1,213 @@
 import Link from "next/link";
+import { StructuredData } from "@/components/structured-data";
 import { getModelsRegistry, getRegistryManifest, getToolRegistry } from "@/lib/registry";
+import { GITHUB_REPO_URL, HUGGING_FACE_ORG_URL, buildHomeSchemas } from "@/lib/seo";
 
-const workflow = [
+const principles = [
   {
-    step: "Registry",
-    text: "Public tool manifests, example prompts, and category labels live in one reviewable place.",
+    id: "01",
+    title: "Public registry",
+    text: "The ontology, examples, parent ids, and model release metadata stay in one open-source surface instead of being buried in private infrastructure.",
   },
   {
-    step: "Compile",
-    text: "A build step turns contributor files into a flat dataset, hierarchy mapping, and site manifests.",
+    id: "02",
+    title: "Hierarchy-aware",
+    text: "Tools are not only flat labels. The project treats parent ids as first-class training structure for hierarchical retrieval and broader tool families.",
   },
   {
-    step: "Train",
-    text: "Normal and hierarchical variants train from the same snapshot with prototype-CE, contrastive, or circle loss.",
+    id: "03",
+    title: "Always live",
+    text: "The dataset is meant to evolve with open-source tooling, not freeze around a one-time benchmark snapshot or a vendor-specific schema.",
   },
-  {
-    step: "Publish",
-    text: "Model release metadata points the downloads page at the newest public checkpoints without redeploying code.",
-  },
-];
-
-const promises = [
-  "Keep the registry public and reviewable.",
-  "Separate submission, dataset generation, and training release cycles.",
-  "Publish every model with dataset version, encoder, loss, and checksum metadata.",
 ];
 
 export default async function HomePage() {
-  const [toolRegistry, modelRegistry, manifest] = await Promise.all([
-    getToolRegistry(),
-    getModelsRegistry(),
+  const [manifest, modelRegistry, toolRegistry] = await Promise.all([
     getRegistryManifest(),
+    getModelsRegistry(),
+    getToolRegistry(),
   ]);
 
-  const featuredTools = toolRegistry.tools.slice(0, 3);
   const publishedCount = modelRegistry.releases.filter((item) => item.status === "published").length;
 
   return (
-    <div className="space-y-20 pb-20">
-      <section className="grid gap-6 lg:grid-cols-[1.35fr_0.9fr]">
-        <div className="panel-strong card-enter rounded-[2rem] px-6 py-8 sm:px-8 sm:py-10">
-          <p className="eyebrow">Open Tool Embeddings</p>
-          <h1 className="mt-4 max-w-4xl text-5xl leading-[0.95] font-semibold sm:text-6xl">
-            Build a public, versioned embedding stack for open-source tool use.
-          </h1>
-          <p className="mt-6 max-w-2xl text-lg leading-8 text-[color:var(--muted)]">
-            The site is the interface, not the source of truth. The source of truth lives in a central registry of
-            tool manifests, training examples, hierarchy labels, and model releases.
+    <div className="space-y-[4.5rem] pb-20 xl:space-y-20">
+      <StructuredData data={buildHomeSchemas()} />
+
+      <section className="grid items-start gap-6 xl:grid-cols-[1.18fr_0.82fr]">
+        <div className="panel-strong reveal rounded-none px-6 py-9 sm:px-8 sm:py-11 lg:px-10">
+          <div className="hero-mark absolute left-[-0.08em] top-[-0.16em] text-[6.5rem] sm:text-[10rem] lg:text-[12rem]">
+            Open
+          </div>
+          <div className="relative z-10 max-w-[min(100%,72rem)] pr-1 sm:pr-4 lg:pr-10">
+            <p className="eyebrow">Cold Industrial Tech</p>
+            <h1 className="mt-6 max-w-[11.8ch] text-[clamp(3.75rem,8vw,7rem)] leading-[0.9]">
+              The open-source layer for tool embeddings.
+            </h1>
+            <p className="mt-7 max-w-3xl text-lg leading-8 text-[color:var(--muted)]">
+              Open Tool Embeddings is building a public, community-evolving embedding set for open-source tools, with
+              GitHub as the collaboration surface and Hugging Face as the model distribution surface.
+            </p>
+
+            <div className="mt-9 flex flex-wrap gap-3">
+              <Link href="/mission" className="primary-button rounded-none px-5 py-3 text-sm font-semibold uppercase tracking-[0.16em]">
+                Enter Mission
+              </Link>
+              <a
+                href={GITHUB_REPO_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="ghost-button rounded-none px-5 py-3 text-sm font-semibold uppercase tracking-[0.16em]"
+              >
+                View GitHub
+              </a>
+              <a
+                href={HUGGING_FACE_ORG_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="ghost-button rounded-none px-5 py-3 text-sm font-semibold uppercase tracking-[0.16em]"
+              >
+                View Hugging Face
+              </a>
+            </div>
+
+            <div className="mt-12 grid gap-3 sm:grid-cols-3 lg:mt-14">
+              <div className="metric-chip reveal delay-1 rounded-none px-4 py-4">
+                <div className="eyebrow">Registry</div>
+                <div className="mt-3 text-4xl font-semibold text-[color:var(--ink)]">{manifest.tool_count}</div>
+                <div className="mt-2 text-sm uppercase tracking-[0.14em] text-[color:var(--muted)]">tools tracked</div>
+              </div>
+              <div className="metric-chip reveal delay-2 rounded-none px-4 py-4">
+                <div className="eyebrow">Snapshot</div>
+                <div className="mt-3 text-4xl font-semibold text-[color:var(--ink)]">{manifest.example_count}</div>
+                <div className="mt-2 text-sm uppercase tracking-[0.14em] text-[color:var(--muted)]">example prompts</div>
+              </div>
+              <div className="metric-chip reveal delay-3 rounded-none px-4 py-4">
+                <div className="eyebrow">Releases</div>
+                <div className="mt-3 text-4xl font-semibold text-[color:var(--ink)]">{modelRegistry.releases.length}</div>
+                <div className="mt-2 text-sm uppercase tracking-[0.14em] text-[color:var(--muted)]">model variants</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-5 xl:pt-6">
+          <aside className="signal-grid reveal delay-1 min-h-[29rem] rounded-none px-6 py-6">
+            <div className="relative z-10 flex h-full flex-col justify-between">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="eyebrow">Signal Map</p>
+                  <div className="mt-3 max-w-xs text-3xl font-semibold text-[color:var(--ink)]">
+                    Registry activity rendered like machine telemetry.
+                  </div>
+                </div>
+                <div className="text-right font-mono text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                  <div>axis: tool</div>
+                  <div>axis: parent_id</div>
+                  <div>axis: release</div>
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="metric-chip rounded-none px-4 py-4">
+                  <div className="text-xs uppercase tracking-[0.16em] text-[color:var(--muted)]">Categories</div>
+                  <div className="mt-2 text-3xl font-semibold text-[color:var(--ink)]">{toolRegistry.categories.length}</div>
+                </div>
+                <div className="metric-chip rounded-none px-4 py-4">
+                  <div className="text-xs uppercase tracking-[0.16em] text-[color:var(--muted)]">Published</div>
+                  <div className="mt-2 text-3xl font-semibold text-[color:var(--ink)]">{publishedCount}</div>
+                </div>
+              </div>
+            </div>
+          </aside>
+
+          <div className="panel steel-card reveal delay-2 ml-0 rounded-none px-6 py-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="eyebrow">Distribution</p>
+                <h2 className="mt-4 text-4xl">GitHub for source. Hugging Face for models.</h2>
+              </div>
+            </div>
+            <p className="mt-5 max-w-lg text-base leading-8 text-[color:var(--muted)]">
+              The repo explains the system and accepts tool contributions. The OpenToolEmbeddings organization is where
+              checkpoints should live so downloads stay obvious and centralized.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-5 xl:grid-cols-[0.85fr_1.15fr]">
+        <div className="panel reveal delay-1 rounded-none px-6 py-7 xl:translate-y-10">
+          <p className="eyebrow">What This Project Is</p>
+          <h2 className="mt-5 text-5xl">A shared representation layer for tools.</h2>
+          <p className="mt-5 text-base leading-8 text-[color:var(--muted)]">
+            Instead of mapping each query directly to a closed tool list, the project builds a public embedding space
+            over tool metadata and examples. That space can support routing, retrieval, clustering, and hierarchical
+            reasoning across open-source tooling.
           </p>
-          <div className="mt-8 flex flex-wrap gap-3">
-            <Link
-              href="/models"
-              className="rounded-full bg-[color:var(--accent-strong)] px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-orange-900/20 hover:-translate-y-0.5"
-            >
-              Browse model variants
-            </Link>
-            <Link
-              href="/tools"
-              className="rounded-full border border-[color:var(--line)] bg-white/65 px-5 py-3 text-sm font-semibold text-[color:var(--ink)] hover:-translate-y-0.5"
-            >
-              Inspect the tool registry
-            </Link>
-            <Link
-              href="/submit"
-              className="rounded-full border border-transparent px-5 py-3 text-sm font-semibold text-[color:var(--accent-strong)] hover:bg-white/50"
-            >
-              Submit a tool
-            </Link>
-          </div>
-          <div className="mt-10 grid gap-3 sm:grid-cols-3">
-            <div className="metric-chip rounded-[1.4rem] px-4 py-4">
-              <div className="text-3xl font-semibold">{manifest.tool_count}</div>
-              <div className="mt-1 text-sm text-[color:var(--muted)]">tools in the registry</div>
-            </div>
-            <div className="metric-chip rounded-[1.4rem] px-4 py-4">
-              <div className="text-3xl font-semibold">{manifest.example_count}</div>
-              <div className="mt-1 text-sm text-[color:var(--muted)]">training examples generated</div>
-            </div>
-            <div className="metric-chip rounded-[1.4rem] px-4 py-4">
-              <div className="text-3xl font-semibold">{publishedCount}</div>
-              <div className="mt-1 text-sm text-[color:var(--muted)]">published model releases</div>
-            </div>
-          </div>
-        </div>
-
-        <aside className="panel card-enter rounded-[2rem] px-6 py-8" style={{ animationDelay: "80ms" }}>
-          <p className="eyebrow">Operating Model</p>
-          <div className="mt-4 space-y-5">
-            <div>
-              <div className="text-sm font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
-                Canonical home
-              </div>
-              <p className="mt-2 text-base leading-7">A GitHub-backed registry for manifests, examples, and review.</p>
-            </div>
-            <div>
-              <div className="text-sm font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
-                Distribution
-              </div>
-              <p className="mt-2 text-base leading-7">
-                Hugging Face or another model host for weights, dataset snapshots, cards, and checksums.
-              </p>
-            </div>
-            <div>
-              <div className="text-sm font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
-                Frontend role
-              </div>
-              <p className="mt-2 text-base leading-7">
-                Next App Router pages expose models, registry state, docs, and contribution instructions from generated
-                manifests.
-              </p>
-            </div>
-          </div>
-        </aside>
-      </section>
-
-      <section className="grid gap-5 lg:grid-cols-3">
-        {promises.map((promise, index) => (
-          <div key={promise} className="panel card-enter rounded-[1.8rem] px-6 py-6" style={{ animationDelay: `${120 + index * 70}ms` }}>
-            <p className="eyebrow">Principle {index + 1}</p>
-            <p className="mt-4 text-lg leading-8">{promise}</p>
-          </div>
-        ))}
-      </section>
-
-      <section>
-        <div className="flex items-end justify-between gap-4">
-          <div>
-            <p className="eyebrow">Pipeline</p>
-            <h2 className="mt-3 text-4xl font-semibold">Registry-first training flow</h2>
-          </div>
-          <Link href="/docs" className="text-sm font-semibold text-[color:var(--accent-strong)]">
-            Full docs
-          </Link>
-        </div>
-        <div className="mt-8 grid gap-4 lg:grid-cols-4">
-          {workflow.map((item, index) => (
-            <article key={item.step} className="panel card-enter rounded-[1.7rem] px-5 py-6" style={{ animationDelay: `${160 + index * 60}ms` }}>
-              <div className="flex items-center justify-between">
-                <p className="eyebrow">{item.step}</p>
-                <span className="text-sm font-semibold text-[color:var(--muted)]">0{index + 1}</span>
-              </div>
-              <p className="mt-4 text-base leading-7 text-[color:var(--ink)]">{item.text}</p>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="grid gap-6 lg:grid-cols-[1fr_1.15fr]">
-        <div className="panel rounded-[1.8rem] px-6 py-7">
-          <p className="eyebrow">What Ships</p>
-          <h2 className="mt-3 text-4xl font-semibold">Two architectures, three losses, one registry snapshot.</h2>
-          <p className="mt-5 max-w-xl text-base leading-8 text-[color:var(--muted)]">
-            Your existing training code already supports `normal` and `hierarchical` variants across
-            `prototype_ce`, `contrastive`, and `circle`. This site keeps those choices visible instead of burying them
-            inside filenames.
-          </p>
-          <div className="mt-6 flex flex-wrap gap-2 text-sm">
-            {["normal", "hierarchical", "prototype_ce", "contrastive", "circle"].map((label) => (
-              <span key={label} className="metric-chip rounded-full px-3 py-1.5">
-                {label}
+          <div className="mt-6 flex flex-wrap gap-2">
+            {["registry-first", "hierarchical", "retrieval", "public checkpoints"].map((item) => (
+              <span key={item} className="metric-chip rounded-none px-3 py-2 text-xs uppercase tracking-[0.14em] text-[color:var(--ink)]">
+                {item}
               </span>
             ))}
           </div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-3">
-          {featuredTools.map((tool, index) => (
-            <article key={tool.id} className="panel rounded-[1.6rem] px-5 py-6">
-              <p className="eyebrow">Featured Tool {index + 1}</p>
-              <h3 className="mt-3 text-2xl font-semibold">{tool.display_name}</h3>
-              <p className="mt-3 text-sm leading-7 text-[color:var(--muted)]">{tool.description}</p>
-              <div className="mt-5 flex flex-wrap gap-2">
-                {tool.tags.slice(0, 3).map((tag) => (
-                  <span key={tag} className="metric-chip rounded-full px-3 py-1 text-xs uppercase tracking-[0.12em]">
-                    {tag}
-                  </span>
-                ))}
+        <div className="grid gap-4">
+          {principles.map((item, index) => (
+            <article
+              key={item.id}
+              className={`panel steel-card reveal rounded-none px-6 py-6 ${index === 1 ? "xl:ml-12" : index === 2 ? "xl:ml-24" : ""}`}
+              style={{ animationDelay: `${180 + index * 80}ms` }}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="eyebrow">{item.id}</p>
+                  <h3 className="mt-4 text-4xl">{item.title}</h3>
+                </div>
+                <div className="steel-index text-sm font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                  signal
+                </div>
               </div>
+              <p className="mt-5 max-w-2xl text-base leading-8 text-[color:var(--muted)]">{item.text}</p>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
+        <div className="panel-strong reveal delay-2 rounded-none px-6 py-8 sm:px-8">
+          <p className="eyebrow">Workflow</p>
+          <h2 className="mt-5 text-5xl sm:text-6xl">Contribute the tool. Build the snapshot. Train the release.</h2>
+          <div className="mt-8 grid gap-4 lg:grid-cols-3">
+            {[
+              "Add a tool manifest and examples in GitHub.",
+              "Set a valid parent_id for the hierarchical model.",
+              "Train from generated registry artifacts and publish to Hugging Face.",
+            ].map((step, index) => (
+              <div key={step} className="metric-chip rounded-none px-4 py-4">
+                <div className="eyebrow">0{index + 1}</div>
+                <p className="mt-3 text-base leading-7 text-[color:var(--ink)]">{step}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="grid gap-4">
+          <Link href="/docs" className="panel steel-card reveal delay-3 rounded-none px-6 py-6">
+            <div className="eyebrow">Training</div>
+            <h3 className="mt-4 text-4xl">Read the training path</h3>
+            <p className="mt-4 text-base leading-8 text-[color:var(--muted)]">
+              Start from the registry build and use the wrapper script for all model variants.
+            </p>
+          </Link>
+          <Link href="/submit" className="panel steel-card reveal delay-4 rounded-none px-6 py-6 lg:ml-12">
+            <div className="eyebrow">Submission</div>
+            <h3 className="mt-4 text-4xl">Add the next tool to the public set</h3>
+            <p className="mt-4 text-base leading-8 text-[color:var(--muted)]">
+              The registry is intentionally empty until the community begins filling it with real tools.
+            </p>
+          </Link>
         </div>
       </section>
     </div>

@@ -1,6 +1,1 @@
-{
-  "curl.http_request": "network.http",
-  "fd.find": "filesystem.search",
-  "ffmpeg.transcode": "media.transform",
-  "ripgrep.search": "filesystem.search"
-}
+{}

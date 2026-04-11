@@ -140,8 +140,8 @@ def load_tool(tool_dir: Path, category_ids: set[str]) -> tuple[dict[str, Any], l
     interface_type = str(manifest.get("interface_type", "")).strip()
     require(interface_type in ALLOWED_INTERFACE_TYPES, f"{tool_id}: unsupported interface type '{interface_type}'")
 
-    parent_category = str(manifest.get("parent_category", "")).strip()
-    require(parent_category in category_ids, f"{tool_id}: unknown parent_category '{parent_category}'")
+    parent_id = str(manifest.get("parent_id") or manifest.get("parent_category") or "").strip()
+    require(parent_id in category_ids, f"{tool_id}: unknown parent_id '{parent_id}'")
 
     maintainers = manifest.get("maintainers", [])
     tags = manifest.get("tags", [])
@@ -161,7 +161,8 @@ def load_tool(tool_dir: Path, category_ids: set[str]) -> tuple[dict[str, Any], l
         "homepage": str(manifest.get("homepage", "")).strip(),
         "license": str(manifest.get("license", "")).strip(),
         "maintainers": [str(item).strip() for item in maintainers if str(item).strip()],
-        "parent_category": parent_category,
+        "parent_id": parent_id,
+        "parent_category": parent_id,
         "tags": [str(item).strip() for item in tags if str(item).strip()],
         "parameters": parameters,
         "example_count": len(examples),
@@ -178,7 +179,8 @@ def load_tool(tool_dir: Path, category_ids: set[str]) -> tuple[dict[str, Any], l
             {
                 "tool": tool_id,
                 "query": example["query"],
-                "parent_category": parent_category,
+                "parent_id": parent_id,
+                "parent_category": parent_id,
                 "interface_type": interface_type,
                 "split": example["split"],
                 "language": example["language"],
@@ -257,7 +259,7 @@ def main() -> None:
     model_releases = load_model_releases(registry_dir / "models" / "releases.yaml")
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
-    category_counts = Counter(item["parent_category"] for item in tool_records)
+    category_counts = Counter(item["parent_id"] for item in tool_records)
     registry_manifest = {
         "version": 1,
         "generated_at": generated_at,
@@ -293,7 +295,7 @@ def main() -> None:
         "generated_at": generated_at,
         "releases": model_releases,
     }
-    hierarchy_payload = {item["id"]: item["parent_category"] for item in tool_records}
+    hierarchy_payload = {item["id"]: item["parent_id"] for item in tool_records}
 
     write_json(generated_dir / "tools.json", tools_payload)
     write_json(generated_dir / "models.json", models_payload)

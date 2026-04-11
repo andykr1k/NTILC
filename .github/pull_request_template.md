@@ -8,7 +8,7 @@
 - [ ] Added or updated `registry/tools/<tool-id>/tool.yaml`
 - [ ] Added or updated `registry/tools/<tool-id>/examples.jsonl`
 - [ ] Confirmed license and source repository are public
-- [ ] Category is valid and present in `registry/categories.yaml`
+- [ ] `parent_id` is valid and present in `registry/categories.yaml`
 - [ ] Ran `python3 scripts/build_registry.py`
 
 ## Verification

@@ -37,6 +37,14 @@ body:
     validations:
       required: true
   - type: input
+    id: parent_id
+    attributes:
+      label: Parent id
+      description: Category id used by the hierarchical model, for example filesystem.search.
+      placeholder: filesystem.search
+    validations:
+      required: true
+  - type: input
     id: license
     attributes:
       label: License

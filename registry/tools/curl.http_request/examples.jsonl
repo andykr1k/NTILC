@@ -1,5 +1,0 @@
-{"query":"Send a GET request to the local health endpoint","split":"train","language":"en"}
-{"query":"Post this JSON payload to the auth service","split":"train","language":"en"}
-{"query":"Call the users endpoint with an Authorization header","split":"train","language":"en"}
-{"query":"Download the file from this URL and print the response headers","split":"train","language":"en"}
-{"query":"Make a DELETE request to remove the stale job from the API","split":"train","language":"en"}

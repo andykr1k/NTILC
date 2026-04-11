@@ -10,9 +10,9 @@ releases:
     status: planned
     published_at:
     download_url:
-    repository_url:
+    repository_url: https://huggingface.co/OpenToolEmbeddings
     sha256:
-    notes: Seed release entry. Publish artifacts after the first registry-backed training run.
+    notes: Planned release. Public checkpoints should be published under the OpenToolEmbeddings Hugging Face organization.
     metrics: {}
   - id: ntilc-normal-contrastive-v0-1-0
     title: NTILC Normal Contrastive v0.1.0
@@ -24,9 +24,9 @@ releases:
     status: planned
     published_at:
     download_url:
-    repository_url:
+    repository_url: https://huggingface.co/OpenToolEmbeddings
     sha256:
-    notes: Seed release entry. Publish artifacts after the first registry-backed training run.
+    notes: Planned release. Public checkpoints should be published under the OpenToolEmbeddings Hugging Face organization.
     metrics: {}
   - id: ntilc-normal-circle-v0-1-0
     title: NTILC Normal Circle v0.1.0
@@ -38,9 +38,9 @@ releases:
     status: planned
     published_at:
     download_url:
-    repository_url:
+    repository_url: https://huggingface.co/OpenToolEmbeddings
     sha256:
-    notes: Seed release entry. Publish artifacts after the first registry-backed training run.
+    notes: Planned release. Public checkpoints should be published under the OpenToolEmbeddings Hugging Face organization.
     metrics: {}
   - id: ntilc-hierarchical-prototype-ce-v0-1-0
     title: NTILC Hierarchical Prototype-CE v0.1.0
@@ -52,9 +52,9 @@ releases:
     status: planned
     published_at:
     download_url:
-    repository_url:
+    repository_url: https://huggingface.co/OpenToolEmbeddings
     sha256:
-    notes: Seed release entry. Publish artifacts after the first registry-backed training run.
+    notes: Planned release. Public checkpoints should be published under the OpenToolEmbeddings Hugging Face organization.
     metrics: {}
   - id: ntilc-hierarchical-contrastive-v0-1-0
     title: NTILC Hierarchical Contrastive v0.1.0
@@ -66,9 +66,9 @@ releases:
     status: planned
     published_at:
     download_url:
-    repository_url:
+    repository_url: https://huggingface.co/OpenToolEmbeddings
     sha256:
-    notes: Seed release entry. Publish artifacts after the first registry-backed training run.
+    notes: Planned release. Public checkpoints should be published under the OpenToolEmbeddings Hugging Face organization.
     metrics: {}
   - id: ntilc-hierarchical-circle-v0-1-0
     title: NTILC Hierarchical Circle v0.1.0
@@ -80,7 +80,7 @@ releases:
     status: planned
     published_at:
     download_url:
-    repository_url:
+    repository_url: https://huggingface.co/OpenToolEmbeddings
     sha256:
-    notes: Seed release entry. Publish artifacts after the first registry-backed training run.
+    notes: Planned release. Public checkpoints should be published under the OpenToolEmbeddings Hugging Face organization.
     metrics: {}

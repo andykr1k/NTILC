@@ -1,5 +1,0 @@
-{"query":"Search recursively for CUDA references in the current repository","split":"train","language":"en"}
-{"query":"Find every TODO under the src directory","split":"train","language":"en"}
-{"query":"Look for the string postgres in all markdown files","split":"train","language":"en"}
-{"query":"Search this project for a regex matching api[_-]key","split":"train","language":"en"}
-{"query":"Find all lines mentioning docker compose inside the docs folder","split":"train","language":"en"}

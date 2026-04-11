@@ -1,6 +1,7 @@
 "use client";
 
 import { useDeferredValue, useState } from "react";
+import { GITHUB_REPO_URL } from "@/lib/seo";
 import type { Category, Tool } from "@/lib/types";
 
 type ToolBrowserProps = {
@@ -15,10 +16,11 @@ export function ToolBrowser({ categories, tools }: ToolBrowserProps) {
   const deferredQuery = useDeferredValue(query);
 
   const normalizedQuery = deferredQuery.trim().toLowerCase();
+  const categoryNameById = new Map(categories.map((item) => [item.id, item.name]));
   const interfaceTypes = Array.from(new Set(tools.map((tool) => tool.interface_type))).sort();
 
   const filteredTools = tools.filter((tool) => {
-    if (category !== "all" && tool.parent_category !== category) {
+    if (category !== "all" && tool.parent_id !== category) {
       return false;
     }
     if (interfaceType !== "all" && tool.interface_type !== interfaceType) {
@@ -33,7 +35,7 @@ export function ToolBrowser({ categories, tools }: ToolBrowserProps) {
       tool.display_name,
       tool.description,
       tool.license,
-      tool.parent_category,
+      tool.parent_id,
       ...tool.tags,
     ]
       .join(" ")
@@ -44,7 +46,7 @@ export function ToolBrowser({ categories, tools }: ToolBrowserProps) {
 
   return (
     <div className="space-y-6">
-      <section className="panel rounded-[1.8rem] px-5 py-5 sm:px-6">
+      <section className="panel reveal delay-1 rounded-none px-5 py-5 sm:px-6">
         <div className="grid gap-4 lg:grid-cols-[1.5fr_0.8fr_0.8fr]">
           <label className="space-y-2">
             <span className="text-sm font-semibold uppercase tracking-[0.15em] text-[color:var(--muted)]">Search</span>
@@ -52,7 +54,7 @@ export function ToolBrowser({ categories, tools }: ToolBrowserProps) {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="search tools, tags, or categories"
-              className="w-full rounded-2xl border border-[color:var(--line)] bg-white/80 px-4 py-3 outline-none focus:border-[color:var(--accent)]"
+              className="w-full rounded-none border border-[color:var(--line)] bg-[rgba(8,15,24,0.8)] px-4 py-3 font-mono text-sm text-[color:var(--ink)] outline-none focus:border-[color:var(--accent)]"
             />
           </label>
           <label className="space-y-2">
@@ -60,7 +62,7 @@ export function ToolBrowser({ categories, tools }: ToolBrowserProps) {
             <select
               value={category}
               onChange={(event) => setCategory(event.target.value)}
-              className="w-full rounded-2xl border border-[color:var(--line)] bg-white/80 px-4 py-3 outline-none focus:border-[color:var(--accent)]"
+              className="w-full rounded-none border border-[color:var(--line)] bg-[rgba(8,15,24,0.8)] px-4 py-3 text-sm text-[color:var(--ink)] outline-none focus:border-[color:var(--accent)]"
             >
               <option value="all">All categories</option>
               {categories.map((item) => (
@@ -75,7 +77,7 @@ export function ToolBrowser({ categories, tools }: ToolBrowserProps) {
             <select
               value={interfaceType}
               onChange={(event) => setInterfaceType(event.target.value)}
-              className="w-full rounded-2xl border border-[color:var(--line)] bg-white/80 px-4 py-3 outline-none focus:border-[color:var(--accent)]"
+              className="w-full rounded-none border border-[color:var(--line)] bg-[rgba(8,15,24,0.8)] px-4 py-3 text-sm text-[color:var(--ink)] outline-none focus:border-[color:var(--accent)]"
             >
               <option value="all">All interfaces</option>
               {interfaceTypes.map((item) => (
@@ -92,11 +94,15 @@ export function ToolBrowser({ categories, tools }: ToolBrowserProps) {
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
-        {filteredTools.map((tool) => (
-          <article key={tool.id} className="panel rounded-[1.7rem] px-5 py-6">
+        {filteredTools.map((tool, index) => (
+          <article
+            key={tool.id}
+            className={`panel steel-card reveal rounded-none px-5 py-6 ${index % 2 === 1 ? "lg:translate-y-10" : ""}`}
+            style={{ animationDelay: `${140 + (index % 6) * 60}ms` }}
+          >
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="eyebrow">{tool.parent_category}</p>
+                <p className="eyebrow">{categoryNameById.get(tool.parent_id) ?? tool.parent_id}</p>
                 <h2 className="mt-3 text-2xl font-semibold">{tool.display_name}</h2>
               </div>
               <span className="metric-chip rounded-full px-3 py-1 text-xs uppercase tracking-[0.16em]">
@@ -141,8 +147,19 @@ export function ToolBrowser({ categories, tools }: ToolBrowserProps) {
         ))}
       </section>
 
-      {!filteredTools.length ? (
-        <section className="panel rounded-[1.8rem] px-6 py-8 text-center text-[color:var(--muted)]">
+      {!tools.length ? (
+        <section className="panel rounded-none px-6 py-8 text-center text-[color:var(--muted)]">
+          <p className="text-lg font-semibold text-[color:var(--ink)]">No tools have been added yet.</p>
+          <p className="mt-3 text-sm leading-7">
+            The registry starts empty on purpose. Add the first community tool on{" "}
+            <a href={GITHUB_REPO_URL} target="_blank" rel="noreferrer" className="inline-link">
+              GitHub
+            </a>{" "}
+            with a manifest, examples, and a valid <span className="code-inline">parent_id</span>.
+          </p>
+        </section>
+      ) : !filteredTools.length ? (
+        <section className="panel rounded-none px-6 py-8 text-center text-[color:var(--muted)]">
           No tools matched the current filters.
         </section>
       ) : null}

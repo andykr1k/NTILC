@@ -1,5 +1,0 @@
-{"query":"Find every pyproject.toml file in this repository","split":"train","language":"en"}
-{"query":"Locate hidden env files below the current directory","split":"train","language":"en"}
-{"query":"Show me every folder named migrations under services","split":"train","language":"en"}
-{"query":"Find executable scripts with deploy in the name","split":"train","language":"en"}
-{"query":"Search for jpeg files under the assets directory","split":"train","language":"en"}

@@ -25,6 +25,7 @@ export type Tool = {
   homepage: string;
   license: string;
   maintainers: string[];
+  parent_id: string;
   parent_category: string;
   tags: string[];
   parameters: ToolParameters;

@@ -27,7 +27,7 @@ registry/
 1. Add or update a tool under `registry/tools/<tool-id>/`.
 2. Run `python3 scripts/build_registry.py`.
 3. Train from `registry/generated/tool_embedding_dataset.jsonl`.
-4. Publish weights to your model host, then update `registry/models/releases.yaml`.
+4. Publish weights to the `OpenToolEmbeddings` Hugging Face organization, then update `registry/models/releases.yaml`.
 5. Re-run `python3 scripts/build_registry.py` so the website picks up the new release metadata.
 
 ## Tool Manifest
@@ -41,11 +41,13 @@ Each `tool.yaml` must include:
 - `source_repo`
 - `license`
 - `maintainers`
-- `parent_category`
+- `parent_id`
 - `tags`
 - `parameters`
 
-The `parent_category` must match an entry in `registry/categories.yaml`.
+The `parent_id` must match an entry in `registry/categories.yaml`. Legacy
+`parent_category` is still accepted by the build script, but new submissions
+should use `parent_id`.
 
 ## Examples
 
