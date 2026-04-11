@@ -33,7 +33,7 @@ export function SiteShell({ children }: { children: ReactNode }) {
                   <span className="menu-caret text-[10px]">+</span>
                 </summary>
 
-                <div className="menu-panel absolute right-0 top-[calc(100%+0.55rem)] z-40 min-w-56 border border-[color:var(--line-strong)] bg-[rgba(10,18,29,0.96)] p-2 shadow-[0_28px_60px_rgba(0,0,0,0.45)] backdrop-blur-2xl">
+                <div className="menu-panel absolute left-0 top-[calc(100%+0.55rem)] z-40 min-w-56 border border-[color:var(--line-strong)] bg-[rgba(10,18,29,0.96)] p-2 shadow-[0_28px_60px_rgba(0,0,0,0.45)] backdrop-blur-2xl">
                   <div className="mb-1 px-2 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
                     Sections
                   </div>
