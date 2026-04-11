@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "generated_at": "2026-04-11T18:25:36Z",
+  "tool_count": 4,
+  "example_count": 20,
+  "category_count": 3,
+  "model_release_count": 6,
+  "published_model_count": 0,
+  "categories": [
+    {
+      "id": "filesystem.search",
+      "name": "Filesystem Search",
+      "tool_count": 2
+    },
+    {
+      "id": "network.http",
+      "name": "HTTP Requests",
+      "tool_count": 1
+    },
+    {
+      "id": "media.transform",
+      "name": "Media Transform",
+      "tool_count": 1
+    }
+  ],
+  "artifacts": {
+    "tools": "registry/generated/tools.json",
+    "models": "registry/generated/models.json",
+    "hierarchy": "registry/generated/hierarchy.json",
+    "dataset": "registry/generated/tool_embedding_dataset.jsonl"
+  }
+}

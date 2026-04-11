@@ -1,0 +1,5 @@
+{"query":"Convert this mov file into an mp4 for the website","split":"train","language":"en"}
+{"query":"Trim the first thirty seconds from this podcast recording","split":"train","language":"en"}
+{"query":"Re-encode this video to h264 and save it as a smaller file","split":"train","language":"en"}
+{"query":"Extract a short clip from the source video starting at one minute","split":"train","language":"en"}
+{"query":"Transcode this wav file into a compressed audio format","split":"train","language":"en"}

@@ -1,0 +1,102 @@
+@import "tailwindcss";
+
+:root {
+  --canvas: oklch(0.97 0.014 89);
+  --canvas-deep: oklch(0.91 0.03 82);
+  --panel: rgba(255, 252, 244, 0.8);
+  --panel-strong: rgba(255, 248, 232, 0.94);
+  --ink: oklch(0.24 0.025 46);
+  --muted: oklch(0.49 0.03 58);
+  --line: rgba(90, 63, 38, 0.14);
+  --accent: oklch(0.58 0.18 40);
+  --accent-strong: oklch(0.49 0.2 31);
+  --accent-cool: oklch(0.58 0.1 210);
+  --shadow-panel: 0 28px 100px rgba(107, 62, 24, 0.14);
+  --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  --font-body: "Trebuchet MS", "Lucida Sans Unicode", "Segoe UI", sans-serif;
+}
+
+html {
+  background:
+    radial-gradient(circle at top left, rgba(242, 188, 128, 0.42), transparent 38%),
+    radial-gradient(circle at top right, rgba(111, 173, 190, 0.2), transparent 30%),
+    linear-gradient(180deg, var(--canvas) 0%, var(--canvas-deep) 100%);
+  color: var(--ink);
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  color: var(--ink);
+  font-family: var(--font-body);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.22), transparent 35%),
+    linear-gradient(225deg, rgba(255, 255, 255, 0.14), transparent 30%);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  letter-spacing: -0.03em;
+}
+
+a,
+button,
+input,
+select {
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--accent) 28%, white);
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.panel {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(18px);
+}
+
+.panel-strong {
+  border: 1px solid rgba(108, 70, 38, 0.18);
+  background: var(--panel-strong);
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(18px);
+}
+
+.eyebrow {
+  color: var(--accent-strong);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.metric-chip {
+  border: 1px solid rgba(109, 73, 42, 0.16);
+  background: rgba(255, 255, 255, 0.66);
+}
+
+.card-enter {
+  animation: rise-in 360ms ease both;
+}

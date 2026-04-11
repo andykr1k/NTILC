@@ -1,0 +1,32 @@
+id: ripgrep.search
+display_name: Ripgrep Search
+description: Search file contents recursively with fast regex-aware text matching.
+interface_type: cli
+source_repo: https://github.com/BurntSushi/ripgrep
+homepage: https://github.com/BurntSushi/ripgrep
+license: MIT OR Unlicense
+maintainers:
+  - open-tool-embedding
+parent_category: filesystem.search
+tags:
+  - search
+  - grep
+  - filesystem
+  - text
+parameters:
+  type: object
+  properties:
+    pattern:
+      type: string
+      description: Text or regex pattern to search for.
+    path:
+      type: string
+      description: Root path to search from.
+    glob:
+      type: string
+      description: Optional file glob constraint.
+    case_sensitive:
+      type: boolean
+      description: Whether matching should preserve case.
+  required:
+    - pattern

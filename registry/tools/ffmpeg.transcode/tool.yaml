@@ -1,0 +1,36 @@
+id: ffmpeg.transcode
+display_name: FFmpeg Transcode
+description: Convert, trim, and re-encode audio or video assets for scripted pipelines.
+interface_type: cli
+source_repo: https://github.com/FFmpeg/FFmpeg
+homepage: https://ffmpeg.org/
+license: LGPL-2.1-or-later
+maintainers:
+  - open-tool-embedding
+parent_category: media.transform
+tags:
+  - media
+  - video
+  - audio
+  - encode
+parameters:
+  type: object
+  properties:
+    input_path:
+      type: string
+      description: Source media asset.
+    output_path:
+      type: string
+      description: Destination asset path.
+    codec:
+      type: string
+      description: Optional target codec.
+    start_time:
+      type: string
+      description: Optional trim start time.
+    duration:
+      type: string
+      description: Optional trim duration.
+  required:
+    - input_path
+    - output_path

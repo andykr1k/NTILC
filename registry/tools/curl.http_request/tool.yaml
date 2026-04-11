@@ -1,0 +1,32 @@
+id: curl.http_request
+display_name: cURL HTTP Request
+description: Send HTTP requests to APIs and web servers with configurable headers and payloads.
+interface_type: cli
+source_repo: https://github.com/curl/curl
+homepage: https://curl.se/
+license: curl
+maintainers:
+  - open-tool-embedding
+parent_category: network.http
+tags:
+  - http
+  - api
+  - download
+  - request
+parameters:
+  type: object
+  properties:
+    url:
+      type: string
+      description: Absolute URL to request.
+    method:
+      type: string
+      description: HTTP method such as GET, POST, PUT, or DELETE.
+    headers:
+      type: array
+      description: Optional header lines for the request.
+    body:
+      type: string
+      description: Optional request payload.
+  required:
+    - url
