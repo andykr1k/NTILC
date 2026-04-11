@@ -4,6 +4,12 @@ Neural Tool Invocation via Learned Compression for Linux tool-calling.
 
 NTILC replaces direct prompt-to-tool-call generation with a staged controller architecture that is easier to debug, faster to route, and less brittle than text-only tool invocation pipelines.
 
+This repository is primarily the research and experimentation codebase for the
+NTILC architecture: dataset preparation, embedding training, retrieval,
+orchestration, LoRA-based specialization, and analysis. The public registry and
+website work sit alongside that core research effort, but the main focus of the
+repo is the paper-aligned system itself.
+
 ## Why This Architecture
 
 Compared to prompt-only tool calling, this repository is built to address the main failure modes highlighted in the paper plan:
@@ -269,3 +275,24 @@ Use:
 ```bash
 pip install -r requirements.txt
 ```
+
+## Open Tool Embeddings
+
+This repo also contains a small public-facing layer for Open Tool Embeddings:
+an open registry for tool manifests, a generated training dataset for normal
+and hierarchical embedding models, and a Next.js website for discovery and
+downloads.
+
+- `registry/` is the canonical source of truth for tool definitions and model
+  release metadata
+- `python3 scripts/build_registry.py` compiles registry inputs into
+  `registry/generated/`
+- `bash scripts/train_registry_embedding_spaces.sh` trains the registry-driven
+  embedding variants
+- `site/` is the public frontend, and published checkpoints belong in the
+  Hugging Face organization:
+  `https://huggingface.co/OpenToolEmbeddings`
+
+If you are here for the research system, the sections above are the primary
+entry point. If you are here to contribute tools or download public embedding
+releases, start with `registry/README.md` and `site/README.md`.
