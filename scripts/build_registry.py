@@ -18,6 +18,7 @@ TOOLS_DIR = REGISTRY_DIR / "tools"
 MODELS_PATH = REGISTRY_DIR / "models" / "releases.yaml"
 CATEGORIES_PATH = REGISTRY_DIR / "categories.yaml"
 GENERATED_DIR = REGISTRY_DIR / "generated"
+SITE_REGISTRY_DIR = REPO_ROOT / "site" / "data" / "registry"
 
 ALLOWED_INTERFACE_TYPES = {"cli", "python", "javascript", "http", "other"}
 ALLOWED_ARCHITECTURES = {"normal", "hierarchical"}
@@ -311,6 +312,13 @@ def main() -> None:
     write_json(generated_dir / "hierarchy.json", hierarchy_payload)
     write_json(generated_dir / "registry_manifest.json", registry_manifest)
     write_jsonl(generated_dir / "tool_embedding_dataset.jsonl", dataset_rows)
+
+    # Mirror site-facing JSON artifacts into the Next.js app so deployments
+    # rooted at `site/` do not depend on sibling files outside the app tree.
+    write_json(SITE_REGISTRY_DIR / "tools.json", tools_payload)
+    write_json(SITE_REGISTRY_DIR / "models.json", models_payload)
+    write_json(SITE_REGISTRY_DIR / "hierarchy.json", hierarchy_payload)
+    write_json(SITE_REGISTRY_DIR / "registry_manifest.json", registry_manifest)
 
     print(
         f"Built registry with {len(tool_records)} tools, "

@@ -1,298 +1,309 @@
 # NTILC
 
-Neural Tool Invocation via Learned Compression for Linux tool-calling.
+NTILC stands for **Neural Tool Invocation via Learned Compression**.
 
-NTILC replaces direct prompt-to-tool-call generation with a staged controller architecture that is easier to debug, faster to route, and less brittle than text-only tool invocation pipelines.
+This repository is the main research codebase for a staged tool-calling system:
+planner-style language modeling, embedding-based tool retrieval, schema-grounded
+argument generation, and controller-managed execution. It also contains the
+public registry, release pipeline, and website for **Open Tool Embeddings**,
+which is the open-source surface of that work.
 
-This repository is primarily the research and experimentation codebase for the
-NTILC architecture: dataset preparation, embedding training, retrieval,
-orchestration, LoRA-based specialization, and analysis. The public registry and
-website work sit alongside that core research effort, but the main focus of the
-repo is the paper-aligned system itself.
+The right way to read this repo is:
 
-## Why This Architecture
+1. **Research first**: NTILC is an architecture for making tool invocation more
+   structured, inspectable, and debuggable than direct prompt-to-tool-call
+   generation.
+2. **Open infrastructure second**: the registry, releases, and site are how that
+   research is being pushed toward an open, reusable foundation layer for tool
+   embeddings.
 
-Compared to prompt-only tool calling, this repository is built to address the main failure modes highlighted in the paper plan:
+## Research Focus
 
-- decoding-heavy inference that increases latency
-- parsing failures from free-form generations
-- no explicit tool-calling stage between query and answer
-- context rot when tool registries become large
+NTILC is built around a simple claim: tool use should not be treated as one
+monolithic text-generation problem.
 
-The system therefore separates planning, retrieval, argument filling, and dispatch into explicit blocks.
+Instead of asking a model to go directly from user request to tool name to
+arguments to final answer in one free-form decode, this repo splits the problem
+into explicit stages:
 
-## Method (Paper-Aligned)
+- planning and control
+- tool retrieval in an embedding space
+- schema-constrained argument generation
+- execution and response handling
 
-This README is organized to match the paper method structure:
+That separation matters for research because it makes failure modes visible.
+You can inspect search queries, selected tools, argument payloads, controller
+observations, retries, and tool outputs instead of treating the whole system as
+an opaque generation trace.
 
-1. Qwen + LoRA (planner and argument filler)
-2. Tool Embeddings (intent geometry + retrieval)
-3. Argument Generation (deterministic + model-assisted filling)
-4. Orchestration (plan, dispatch, response, retry)
+## Current Architecture
 
-## Canonical Inference Flow
+The current runtime lives primarily in [agent/runtime.py](/scratch4/home/akrik/NTILC/agent/runtime.py)
+and [agent/protocol.py](/scratch4/home/akrik/NTILC/agent/protocol.py).
 
-This section is the canonical inference flow for the repository.
+### 1. Controller-Led Tool Use
 
-### Step-by-step
+The assistant does not call tools directly. It emits a strict XML control
+protocol:
 
-1. User query enters Qwen (optionally with LoRA adapter).
-2. Model emits a `<plan>` block with atomic actions.
-3. Controller pauses at `</plan>` and processes each action.
-4. Each action is embedded and sent to tool embedding retrieval.
-5. Retrieval returns `top_k` cluster candidates `(cluster_id, score)`.
-6. Tool registry maps clusters to tools and schemas.
-7. Argument generator is conditioned on query + intent + selected tool metadata.
-8. Controller emits `<dispatch>` block.
-9. Dispatcher validates and optionally executes the call.
-10. Dispatcher emits `<response>` block.
-11. Controller either retries next candidate or returns answer/results.
+- `<search_tools>` to describe the capability it needs
+- `<select_tool>` to choose from retrieved candidates
+- `<dispatch>` after the controller returns the exact schema
+- `<response>` from the controller back to the model after tool execution
 
-### Plan Block
+This keeps the language model inside a narrow, inspectable interface instead of
+letting it invent tool schemas or call formats.
 
-```xml
-<plan>
-  <action><len:10>list files</len></action>
-  <action><len:12>search cuda</len></action>
-</plan>
-```
+### 2. Embedding-Based Tool Retrieval
 
-### Dispatch Block
+The retrieval layer uses learned tool embedding spaces rather than plain string
+matching over tool names.
 
-```xml
-<dispatch>
-  <tool><len:4>grep</len></tool>
-  <arg name="opt"><len:2>-R</len></arg>
-  <arg name="pattern"><len:6>"cuda"</len></arg>
-  <arg name="path"><len:1>.</len></arg>
-</dispatch>
-```
+Two model families are trained in this repo:
 
-### Response Block
+- **normal** tool embedding models
+- **hierarchical** tool embedding models that explicitly use parent categories
 
-```xml
-<response>
-  <tool><len:4>grep</len></tool>
-  <status><len:4>fail</len></status>
-  <text><len:9>it failed</len></text>
-  <retry><len:4>true</len></retry>
-</response>
-```
+Each family supports three losses:
 
-## Canonical Workflow
+- `prototype_ce`
+- `contrastive`
+- `circle`
 
-This section is the canonical training/analysis workflow for the repository.
+The runtime loads a trained checkpoint bundle with
+`training.load_checkpoint_bundle(...)`, embeds the incoming search request, and
+retrieves top-k tool candidates by similarity to learned tool centroids.
 
-### 1) Build cleaned datasets
+### 3. Schema-Grounded Argument Generation
 
-```bash
-bash scripts/cleanPairs.sh
-```
+Once the controller has selected a tool, the model does not improvise argument
+keys. It is conditioned on the exact tool schema and uses structured generation
+to produce only the allowed argument fields.
 
-Outputs:
+That makes argument generation a separate, measurable subproblem rather than a
+side effect of unconstrained response generation.
 
-- `data/man/nl_command_pairs_cleaned_v2.json(.l)`
-- `data/man/nl_command_pairs_flat_clean_v2.json(.l)`
-- `data/man/nl_command_pairs_flat_train_v2.json(.l)`
+### 4. Execution Layer
 
-### 2) Train Phase 1 (intent embeddings)
+The execution layer uses the tool catalog plus the executable implementations in
+[REPL/tools.py](/scratch4/home/akrik/NTILC/REPL/tools.py).
 
-```bash
-bash scripts/trainIE.sh
-```
+The runtime checks that:
 
-Checkpoint:
+- tool names in the checkpoint match the tool catalog
+- tool names in the catalog match executable tools
+- controller steps stay within the expected protocol
 
-- `checkpoints/intent_embedder/best_model.pt`
+This keeps retrieval, schema, and execution aligned.
 
-### 3) Train Phase 2 (cluster retrieval)
+## Main Code Paths
 
-```bash
-bash scripts/trainCR.sh
-```
+The repo has changed enough that the old phase-1 / phase-2 README is no longer
+the right mental model. The most important active surfaces are:
 
-Checkpoint:
-
-- `checkpoints/cluster_retrieval/best_model.pt`
-
-### 4) Train LoRA command model
-
-```bash
-bash scripts/trainLora.sh
-```
-
-Checkpoint:
-
-- `checkpoints/lora_nl_command_full/`
-
-### 5) Test LoRA
-
-```bash
-bash scripts/testLora.sh
-```
-
-### 6) Analyze
-
-Primary notebooks:
-
-- `notebooks/embedding_space_analysis_v2.ipynb`
-- `notebooks/retrieval_and_lora_analysis_v2.ipynb`
-- `notebooks/full_inference_pipeline.ipynb`
-
-Workflow notes:
-
-- `source_url` is metadata for traceability/splits/error analysis, not a model feature.
-- Inference uses `tool_names` saved in retrieval checkpoints for mapper initialization when available.
-
-## Dataset
-
-NTILC uses man-page-derived NL-command pairs.
-
-Pipeline:
-
-1. scrape/generate command-oriented examples from man-page metadata
-2. clean and validate examples (`cleanPairs.sh`)
-3. train on flattened records from `data/man/nl_command_pairs_flat_train_v2.jsonl`
-
-This repository is now NL-command-pairs only (no synthetic data generator path).
-
-## Training Components
-
-### Tool Embeddings
-
-- `training/train_intent_embedding.py`
-- learns intent embedding geometry for tools/commands
-- outputs phase-1 checkpoint consumed by retrieval training
-
-### Cluster Retrieval
-
-- `training/train_cluster_retrieval.py`
-- trains query encoder to retrieve correct cluster/tool IDs
-- stores cluster centroids + tool-name mapping
-
-### LoRA (Optional)
-
-- `training/train_lora_nl_command.py`
-- supports `full` and `tail` command generation modes
-- can be used for planner/argument-filler specialization
-
-## Inference and Orchestration
-
-### Direct retrieval inference
-
-```python
-from inference import ClusterBasedToolSystem
-
-system = ClusterBasedToolSystem.from_pretrained(
-    intent_embedder_path="checkpoints/intent_embedder/best_model.pt",
-    query_encoder_path="checkpoints/cluster_retrieval/best_model.pt",
-)
-
-result = system.predict("search recursively for cuda in current dir", top_k=3)
-print(result)
-```
-
-### Full orchestrator run
-
-```python
-from orchestrator.agent import NTILCOrchestratorAgent
-
-agent = NTILCOrchestratorAgent.from_pretrained(
-    intent_embedder_path="checkpoints/intent_embedder/best_model.pt",
-    query_encoder_path="checkpoints/cluster_retrieval/best_model.pt",
-    qwen_model_name_or_path="Qwen/Qwen3.5-9B",
-    # lora_adapter_path="checkpoints/lora_nl_command_full",
-)
-
-run = agent.run(
-    request="Find all cuda references and summarize top files",
-    execute_tools=False,
-    top_k_candidates=3,
-    max_retries=2,
-)
-
-print(run.plan_block)
-print(run.atomic_actions)
-print(run.action_failures)
-for step in run.steps:
-    print(step.dispatch_block)
-    print(step.response_block)
-```
-
-## Execution Layer and Safety
-
-`models/software_layer.py` handles:
-
-- cluster-level and tool-level callable registration
-- argument validation against schema
-- safety rule enforcement
-- optional permission checks
-- dispatch via `ToolDispatcher`
-
-Example mapper + dispatcher wiring:
-
-```python
-from models.software_layer import ClusterToolMapper, ToolDispatcher
-
-mapper = ClusterToolMapper.from_retrieval_checkpoint(
-    "checkpoints/cluster_retrieval/best_model.pt"
-)
-mapper.register_shell_tools_for_all_clusters(timeout_seconds=20, cwd=".")
-
-dispatcher = ToolDispatcher(mapper=mapper, fail_on_nonzero_exit=True)
-result = dispatcher.dispatch_cluster(
-    cluster_id=0,
-    arguments={"command": "ls -la"},
-    execute=False,  # dry-run
-)
-print(result.to_dict())
-```
-
-Example safety-rule formats:
-
-- `requires_permission:filesystem.read`
-- `forbid_arg:path`
-- `forbid_value:mode=unsafe`
-- `non_empty:query`
-- `regex:path:^/safe/`
-
-## Experiments and Analysis
-
-This aligns with the paper plan’s experiments/results framing:
-
-- retrieval quality and cluster behavior
-- plan/dispatch/response block behavior
-- LoRA command generation quality
-- failure-case and retry-path inspection
-
-Use:
-
-- `bash scripts/testLora.sh`
-- notebooks under `notebooks/` for embedding/retrieval analysis
-
-## Setup
+- [agent/runtime.py](/scratch4/home/akrik/NTILC/agent/runtime.py): controller, retriever, model adapter, runtime assembly
+- [agent/agent.py](/scratch4/home/akrik/NTILC/agent/agent.py): Streamlit research UI for running the agent and inspecting events/stats
+- [agent/protocol.py](/scratch4/home/akrik/NTILC/agent/protocol.py): XML control block parsing and serialization
+- [training/train_embedding_space.py](/scratch4/home/akrik/NTILC/training/train_embedding_space.py): normal tool embedding training
+- [training/train_hierarchical_embedding_space.py](/scratch4/home/akrik/NTILC/training/train_hierarchical_embedding_space.py): hierarchy-aware tool embedding training
+- [training/wandb_diagnostics.py](/scratch4/home/akrik/NTILC/training/wandb_diagnostics.py): evaluation diagnostics and logging
+- [registry/](/scratch4/home/akrik/NTILC/registry): public tool definitions, examples, model releases, and generated artifacts
+- [scripts/import_oss_registry.py](/scratch4/home/akrik/NTILC/scripts/import_oss_registry.py): import OSS tool data into registry manifests
+- [scripts/build_registry.py](/scratch4/home/akrik/NTILC/scripts/build_registry.py): compile registry YAML into generated JSON/JSONL
+- [scripts/sync_model_releases.py](/scratch4/home/akrik/NTILC/scripts/sync_model_releases.py): compute checksums, summarize metrics, generate model cards
+- [scripts/publish_huggingface_models.py](/scratch4/home/akrik/NTILC/scripts/publish_huggingface_models.py): publish prepared releases to Hugging Face
+- [site/](/scratch4/home/akrik/NTILC/site): Next.js site for the public registry and model release surface
+
+## Running the Research System
+
+### Python Environment
+
+Install the Python dependencies first:
 
 ```bash
 pip install -r requirements.txt
 ```
 
+The runtime expects:
+
+- a Qwen model checkpoint available to `transformers`
+- a tool catalog
+- a trained tool embedding checkpoint
+
+The current runtime defaults are:
+
+- tool catalog: `data/OSS/tools.json`
+- embedding checkpoint: `data/OSS/output/normal/circle/best.pt`
+- model family: `Qwen/Qwen3.5-27B`
+
+### Launch the Agent UI
+
+The main interactive entry point is the Streamlit app:
+
+```bash
+streamlit run agent/agent.py
+```
+
+That UI exposes:
+
+- runtime configuration
+- live controller events
+- retrieved tools
+- tool responses
+- per-turn stats and token accounting
+
+### Notes
+
+- The default runtime config is GPU-oriented.
+- If your local devices differ, change them in the sidebar or update the
+  runtime config.
+- The runtime will fail fast if the tool catalog, embedding checkpoint, and
+  executable tool registry disagree.
+
+## Training Workflow
+
+The current embedding work is driven by the registry snapshot, not by the older
+phase-1 / phase-2 training flow described in the previous README.
+
+### 1. Import or update the public tool registry
+
+```bash
+python3 scripts/import_oss_registry.py
+python3 scripts/build_registry.py
+```
+
+This produces:
+
+- `registry/generated/tools.json`
+- `registry/generated/models.json`
+- `registry/generated/hierarchy.json`
+- `registry/generated/tool_embedding_dataset.jsonl`
+- `registry/generated/registry_manifest.json`
+
+### 2. Train every release variant
+
+```bash
+bash scripts/train_registry_embedding_spaces.sh
+```
+
+That wrapper trains:
+
+- `normal/prototype_ce`
+- `normal/contrastive`
+- `normal/circle`
+- `hierarchical/prototype_ce`
+- `hierarchical/contrastive`
+- `hierarchical/circle`
+
+### 3. Or run the trainers directly
+
+Normal:
+
+```bash
+python3 -m training.train_embedding_space \
+  --dataset-path registry/generated/tool_embedding_dataset.jsonl \
+  --output-dir output/registry_embeddings \
+  --loss-type contrastive
+```
+
+Hierarchical:
+
+```bash
+python3 -m training.train_hierarchical_embedding_space \
+  --dataset-path registry/generated/tool_embedding_dataset.jsonl \
+  --hierarchy-path registry/generated/hierarchy.json \
+  --output-dir output/registry_embeddings \
+  --loss-type contrastive
+```
+
+### 4. Sync release metadata
+
+```bash
+python3 scripts/sync_model_releases.py
+```
+
+This script:
+
+- computes checkpoint hashes
+- summarizes the best metrics from local runs
+- generates model cards
+- prepares the release manifest used for publishing
+
+### 5. Publish the released checkpoints
+
+```bash
+python3 scripts/publish_huggingface_models.py
+python3 scripts/build_registry.py
+```
+
+This is the step that moves local checkpoints into the public release surface
+and refreshes the generated registry so the site reflects the latest published
+model state.
+
+## Current Public Snapshot
+
+The generated registry currently tracks:
+
+- `26` tools
+- `312` example prompts
+- `6` categories
+- `6` published model variants
+
+See [registry/generated/registry_manifest.json](/scratch4/home/akrik/NTILC/registry/generated/registry_manifest.json)
+for the current compiled snapshot.
+
 ## Open Tool Embeddings
 
-This repo also contains a small public-facing layer for Open Tool Embeddings:
-an open registry for tool manifests, a generated training dataset for normal
-and hierarchical embedding models, and a Next.js website for discovery and
-downloads.
+Everything above explains the research system. This is the part that explains
+the broader open-source direction.
 
-- `registry/` is the canonical source of truth for tool definitions and model
-  release metadata
-- `python3 scripts/build_registry.py` compiles registry inputs into
-  `registry/generated/`
-- `bash scripts/train_registry_embedding_spaces.sh` trains the registry-driven
-  embedding variants
-- `site/` is the public frontend, and published checkpoints belong in the
-  Hugging Face organization:
-  `https://huggingface.co/OpenToolEmbeddings`
+**Open Tool Embeddings** is the public registry and release layer that sits on
+top of the NTILC embedding work. The goal is not just to have a private tool
+retriever for one agent. The goal is to build a **public foundation layer for
+tool embeddings**.
 
-If you are here for the research system, the sections above are the primary
-entry point. If you are here to contribute tools or download public embedding
-releases, start with `registry/README.md` and `site/README.md`.
+That means:
+
+- the tool ontology should be public
+- the examples should be public
+- the hierarchy should be explicit
+- the training snapshot should be reproducible
+- the checkpoint releases should be public
+
+The long-term point is straightforward: tool use should not depend on a closed,
+vendor-specific, constantly hidden registry. There should be an open-source base
+representation of tools that people can inspect, improve, retrain, benchmark,
+and build on.
+
+In practice, that is what this repo is trying to become:
+
+- **GitHub** as the collaboration surface for tool definitions and examples
+- **Hugging Face** as the distribution surface for released checkpoints
+- **`registry/`** as the canonical source of truth
+- **`site/`** as the public index for the registry and model downloads
+
+This is why the registry work matters. It is not side documentation. It is the
+public interface for an **open-source foundation tool embedding model**:
+
+- a shared embedding space over tools
+- a hierarchy-aware representation of tool families
+- a living dataset that can grow with open-source software
+- public checkpoints that downstream systems can reuse for retrieval, routing,
+  clustering, and evaluation
+
+If the research is successful, the output should not be only a paper or a
+single agent demo. It should be a reusable open layer for tool understanding.
+
+## Related Public Surfaces
+
+- GitHub repo: `https://github.com/andykr1k/NTILC`
+- Hugging Face org: `https://huggingface.co/OpenToolEmbeddings`
+- Site app: `site/`
+
+To run the site locally, use Node 20+:
+
+```bash
+cd site
+npm install
+npm run dev
+```

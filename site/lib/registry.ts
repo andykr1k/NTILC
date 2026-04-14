@@ -1,23 +1,16 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import type { ModelsRegistry, RegistryManifest, ToolRegistry } from "@/lib/types";
-
-const generatedDir = path.resolve(process.cwd(), "..", "registry", "generated");
-
-async function readJson<T>(filename: string): Promise<T> {
-  const filePath = path.join(generatedDir, filename);
-  const raw = await readFile(filePath, "utf8");
-  return JSON.parse(raw) as T;
-}
+import modelsRegistry from "@/data/registry/models.json";
+import registryManifest from "@/data/registry/registry_manifest.json";
+import toolRegistry from "@/data/registry/tools.json";
 
 export function getToolRegistry() {
-  return readJson<ToolRegistry>("tools.json");
+  return Promise.resolve(toolRegistry as unknown as ToolRegistry);
 }
 
 export function getModelsRegistry() {
-  return readJson<ModelsRegistry>("models.json");
+  return Promise.resolve(modelsRegistry as unknown as ModelsRegistry);
 }
 
 export function getRegistryManifest() {
-  return readJson<RegistryManifest>("registry_manifest.json");
+  return Promise.resolve(registryManifest as unknown as RegistryManifest);
 }
