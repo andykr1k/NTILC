@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # Fill in this one line.
-DATASET_PATH="data/Vigil/tool_embedding_dataset.jsonl"
+DATASET_PATH="data/OSS/tool_embedding_dataset.jsonl"
 
 # Optional W&B defaults. Edit these if you want the script to run with W&B
 # without needing extra environment variables every time.

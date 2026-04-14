@@ -31,7 +31,7 @@ LOSS_TYPE_ALIASES = {
     "circle": "circle",
 }
 CANONICAL_LOSS_TYPES = ("prototype_ce", "contrastive", "circle")
-DATA_DIR = Path("data/ToolVerifier")
+DATA_DIR = Path("data/new")
 DEFAULT_DATASET_PATH = DATA_DIR / "tool_embedding_dataset.jsonl"
 DEFAULT_OUTPUT_DIR = DATA_DIR / "embeddings"
 
