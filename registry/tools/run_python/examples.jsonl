@@ -1,0 +1,12 @@
+{"query": "Can you calculate the factorial of 10 for me?", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Please write a script to sort this list of numbers: 45, 23, 67, 12, 89.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "I need to convert these temperatures from Celsius to Fahrenheit: 20, 25, 30.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Could you analyze this dataset and find the average sales per region?", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Write a function to check if a number is prime, then test it with 17.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Help me clean this text by removing all punctuation marks.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "I need to generate a random password with 12 characters, including symbols.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Please compute the compound interest for $5000 at 3% over 5 years.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Can you merge these two lists and remove any duplicates?", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Run a simulation to roll a six-sided die 100 times and show the frequency.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "I want to extract all email addresses from this block of text.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Create a simple loop that prints multiplication tables from 1 to 10.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}

@@ -1,0 +1,23 @@
+id: retrieve_memory
+display_name: Retrieve Memory
+description: Retrieve stored information based on a query.
+interface_type: python
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: memory
+tags:
+- state
+- storage
+- kv
+- memory
+- retrieve_memory
+parameters:
+  type: object
+  properties:
+    query:
+      type: string
+  required:
+  - query

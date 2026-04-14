@@ -8,10 +8,11 @@ import { HUGGING_FACE_ORG_URL, buildCollectionPageSchema, buildPageMetadata } fr
 export async function generateMetadata(): Promise<Metadata> {
   const modelRegistry = await getModelsRegistry();
   const publishedCount = modelRegistry.releases.filter((item) => item.status === "published").length;
+  const readyCount = modelRegistry.releases.filter((item) => item.status === "ready").length;
 
   return buildPageMetadata({
     title: "Embedding Model Downloads",
-    description: `Browse ${modelRegistry.releases.length} tracked tool embedding variants across normal and hierarchical architectures, including ${publishedCount} published releases.`,
+    description: `Browse ${modelRegistry.releases.length} tracked tool embedding variants across normal and hierarchical architectures, including ${readyCount} ready artifacts and ${publishedCount} published releases.`,
     path: "/models",
     keywords: ["model downloads", "embedding checkpoints", "hierarchical model", "contrastive loss"],
   });
@@ -19,6 +20,8 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function ModelsPage() {
   const modelRegistry = await getModelsRegistry();
+  const readyCount = modelRegistry.releases.filter((item) => item.status === "ready").length;
+  const publishedCount = modelRegistry.releases.filter((item) => item.status === "published").length;
 
   return (
     <div className="space-y-10 pb-16">
@@ -31,8 +34,8 @@ export default async function ModelsPage() {
       />
       <PageHeader
         eyebrow="Models"
-        title="Download the latest embedding variants."
-        summary="The OpenToolEmbeddings Hugging Face organization is the canonical download home for public checkpoints. Every release here is keyed by architecture, loss, encoder, dataset version, and status."
+        title="Track packaged releases and live downloads."
+        summary="The OpenToolEmbeddings Hugging Face organization is the canonical distribution surface. Releases here move from planned to ready once local artifacts and checksums exist, then to published once the checkpoint is live on Hugging Face."
         meta={
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-3">
@@ -41,16 +44,12 @@ export default async function ModelsPage() {
                 <div className="mt-1 text-sm text-[color:var(--muted)]">tracked variants</div>
               </div>
               <div className="metric-chip rounded-none px-4 py-4">
-                <div className="text-3xl font-semibold">
-                  {modelRegistry.releases.filter((item) => item.architecture === "normal").length}
-                </div>
-                <div className="mt-1 text-sm text-[color:var(--muted)]">normal releases</div>
+                <div className="text-3xl font-semibold">{readyCount}</div>
+                <div className="mt-1 text-sm text-[color:var(--muted)]">ready artifacts</div>
               </div>
               <div className="metric-chip rounded-none px-4 py-4">
-                <div className="text-3xl font-semibold">
-                  {modelRegistry.releases.filter((item) => item.architecture === "hierarchical").length}
-                </div>
-                <div className="mt-1 text-sm text-[color:var(--muted)]">hierarchical releases</div>
+                <div className="text-3xl font-semibold">{publishedCount}</div>
+                <div className="mt-1 text-sm text-[color:var(--muted)]">published releases</div>
               </div>
             </div>
             <a

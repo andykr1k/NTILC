@@ -1,0 +1,41 @@
+id: send_http_request
+display_name: Send HTTP Request
+description: Make a generic HTTP request to any external REST API.
+interface_type: http
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: external_integrations
+tags:
+- http
+- api
+- network
+- external-integrations
+- send_http_request
+parameters:
+  type: object
+  properties:
+    url:
+      type: string
+    method:
+      type: string
+      enum:
+      - GET
+      - POST
+      - PUT
+      - PATCH
+      - DELETE
+      default: GET
+    headers:
+      type: object
+      description: Key-value map of request headers
+    body:
+      type: string
+      description: Request body (JSON string or plain text)
+    timeout_ms:
+      type: integer
+      default: 10000
+  required:
+  - url

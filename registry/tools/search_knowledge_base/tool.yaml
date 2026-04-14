@@ -1,0 +1,32 @@
+id: search_knowledge_base
+display_name: Search Knowledge Base
+description: Perform semantic/vector search over a private document store or embeddings
+  index.
+interface_type: python
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: information_retrieval
+tags:
+- retrieval
+- search
+- web
+- information-retrieval
+- search_knowledge_base
+parameters:
+  type: object
+  properties:
+    query:
+      type: string
+      description: Natural language search query
+    top_k:
+      type: integer
+      default: 5
+      description: Number of top results to return
+    namespace:
+      type: string
+      description: Optional namespace or collection to scope the search
+  required:
+  - query

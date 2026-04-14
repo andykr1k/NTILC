@@ -1,0 +1,23 @@
+id: calculate
+display_name: Calculate
+description: Evaluate a mathematical expression and return the result.
+interface_type: python
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: computation
+tags:
+- execution
+- analysis
+- runtime
+- computation
+- calculate
+parameters:
+  type: object
+  properties:
+    expression:
+      type: string
+  required:
+  - expression

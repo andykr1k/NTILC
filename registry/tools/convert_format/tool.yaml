@@ -1,0 +1,45 @@
+id: convert_format
+display_name: Convert Format
+description: Transform data between structured formats such as JSON, CSV, XML, YAML,
+  and Markdown.
+interface_type: python
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: structured_data
+tags:
+- documents
+- formats
+- parsing
+- structured-data
+- convert_format
+parameters:
+  type: object
+  properties:
+    input:
+      type: string
+      description: Input data as a string
+    from_format:
+      type: string
+      enum:
+      - json
+      - csv
+      - xml
+      - yaml
+      - markdown
+      - toml
+    to_format:
+      type: string
+      enum:
+      - json
+      - csv
+      - xml
+      - yaml
+      - markdown
+      - toml
+  required:
+  - input
+  - from_format
+  - to_format

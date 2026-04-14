@@ -1,11 +1,20 @@
 version: 1
 categories:
-  - id: filesystem.search
-    name: Filesystem Search
-    summary: Search file trees and inspect text inside repositories or local directories.
-  - id: network.http
-    name: HTTP Requests
-    summary: Call remote HTTP APIs or fetch web resources from the command line.
-  - id: media.transform
-    name: Media Transform
-    summary: Convert, trim, or re-encode media assets through scripted pipelines.
+- id: computation
+  name: Computation
+  summary: Execute code, run notebook or SQL workloads, and perform local calculations.
+- id: external_integrations
+  name: External Integrations
+  summary: Call external APIs and services through generic HTTP request workflows.
+- id: file_system
+  name: File System
+  summary: Read, write, inspect, search, and manipulate local files and directories.
+- id: information_retrieval
+  name: Information Retrieval
+  summary: Search the web, fetch remote content, and query retrieval-oriented indexes.
+- id: memory
+  name: Memory
+  summary: Persist, retrieve, update, and inspect lightweight key-value memory entries.
+- id: structured_data
+  name: Structured Data
+  summary: Parse documents and convert content between structured data formats.

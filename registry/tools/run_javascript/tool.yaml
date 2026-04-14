@@ -1,0 +1,25 @@
+id: run_javascript
+display_name: Run JavaScript
+description: Execute JavaScript (Node.js) code for browser-native logic, JSON transforms,
+  or Node tasks.
+interface_type: javascript
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: computation
+tags:
+- execution
+- analysis
+- runtime
+- computation
+- run_javascript
+parameters:
+  type: object
+  properties:
+    code:
+      type: string
+      description: JavaScript code to execute
+  required:
+  - code

@@ -32,7 +32,7 @@ export default async function ToolsPage() {
       <PageHeader
         eyebrow="Tools"
         title="The central registry for community-submitted open-source tools."
-        summary="This page is generated from `registry/` and starts empty on purpose. The inventory should grow through public submissions, explicit parent ids for the hierarchical model, and reviewable example prompts."
+        summary="This page is generated from `registry/`. The initial OSS baseline is already imported, and the inventory can keep growing through public submissions, explicit parent ids for the hierarchical model, and reviewable example prompts."
         meta={
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-3">

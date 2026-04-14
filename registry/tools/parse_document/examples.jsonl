@@ -1,0 +1,12 @@
+{"query": "I need to pull all the text out of this quarterly report PDF at /documents/reports/q3_2023.pdf.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Can you extract just the tables from the invoice I uploaded to /files/invoices/client_101.pdf?", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Please grab the plain text content from this HTML file located at /data/webpages/terms.html.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "I want to convert the content of /docs/manuals/setup_guide.docx into readable text.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Extract the specific fields like date, amount, and vendor name from /receipts/march_2024/receipt_057.pdf.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Could you parse the unstructured text from this research paper at /library/papers/ai_trends_2025.pdf?", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "I need the text content extracted from the meeting notes saved at /notes/team_standup.docx.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Please read through the contract at /legal/agreements/vendor_contract.pdf and get the main text body.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Extract the contact details and summary from the brochure located at /marketing/materials/fall_2024.pdf.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Can you pull out the structured data from this spreadsheet converted to PDF at /finance/budget_q4.pdf?", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "I need the raw text extracted from the web archive file at /archive/2020/product_launch.html.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Please parse the document at /hr/policies/remote_work.docx and give me the clean text version.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}

@@ -82,8 +82,8 @@ export function SiteShell({ children }: { children: ReactNode }) {
             <div className="eyebrow">Open Tool Embeddings</div>
             <div className="mt-4 max-w-xl text-4xl font-semibold text-[color:var(--ink)]">An industrial-grade public layer for tool understanding.</div>
             <p className="mt-4 max-w-xl text-base leading-8 text-[color:var(--muted)]">
-              The registry stays open, the hierarchy stays explicit, and published checkpoints stay downloadable through
-              Hugging Face.
+              The registry stays open, the hierarchy stays explicit, and ready checkpoints move through the
+              OpenToolEmbeddings Hugging Face organization.
             </p>
           </div>
 

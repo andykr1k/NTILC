@@ -1,0 +1,23 @@
+id: run_bash_command
+display_name: Run Bash Command
+description: Execute a bash command in the system shell.
+interface_type: cli
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: file_system
+tags:
+- files
+- workspace
+- local-io
+- file-system
+- run_bash_command
+parameters:
+  type: object
+  properties:
+    command:
+      type: string
+  required:
+  - command

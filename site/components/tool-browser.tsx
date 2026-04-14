@@ -151,7 +151,7 @@ export function ToolBrowser({ categories, tools }: ToolBrowserProps) {
         <section className="panel rounded-none px-6 py-8 text-center text-[color:var(--muted)]">
           <p className="text-lg font-semibold text-[color:var(--ink)]">No tools have been added yet.</p>
           <p className="mt-3 text-sm leading-7">
-            The registry starts empty on purpose. Add the first community tool on{" "}
+            Add tools through the public registry on{" "}
             <a href={GITHUB_REPO_URL} target="_blank" rel="noreferrer" className="inline-link">
               GitHub
             </a>{" "}

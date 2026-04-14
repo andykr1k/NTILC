@@ -1,0 +1,12 @@
+{"query": "Update the key user_email with the new address john.doe@example.com without overwriting other fields.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Change the value for last_login_date to 2023-11-15 in my profile memory.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Modify the stored preference for theme to dark mode, keeping all other settings intact.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Add the new note 'Meeting at 3 PM' to the existing task list under key daily_tasks.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Refresh the contact number saved under key emergency_contact to 555-0199.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Update the budget_amount key to 1500 but ensure previous notes remain unchanged.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Set the value for project_status to in_progress without replacing the entire record.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Merge the new address line 'Apt 4B' into the existing home_address entry.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Change the status of key order_12345 to shipped while preserving tracking info.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Update the user preference for notifications to true without clearing other options.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Modify the expiration_date key in my subscription record to 2024-01-01.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Append the new tag 'urgent' to the existing issue_tracker entry without full replacement.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}

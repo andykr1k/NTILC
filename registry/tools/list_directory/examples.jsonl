@@ -1,0 +1,12 @@
+{"query": "Show me all the files in the downloads folder.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "What is in my home directory?", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "List everything in the project folder recursively.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "I need to see the contents of /var/log.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Can you show me the files in the images directory?", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Display the directory structure for C:/Users/Documents.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "What files are stored in the backup folder?", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "List all items in the current directory.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Show me the contents of /tmp.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "I want to see what's in the documents folder, including subfolders.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Check what files exist in the root directory.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Display the directory listing for /home/user/music.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}

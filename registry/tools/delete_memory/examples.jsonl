@@ -1,0 +1,12 @@
+{"query": "Remove the note I saved under 'meeting_notes_march'.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Delete the saved preference for 'dark_mode_enabled'.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Get rid of the entry labeled 'project_deadline_q2'.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "I need to erase the data stored as 'user_feedback_jan'.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Clear the record with the key 'travel_itinerary_paris'.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Take out the saved item 'budget_estimate_2024'.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Wipe the memory entry called 'client_contact_details'.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Remove the value associated with 'last_login_timestamp'.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Delete what I stored under 'shopping_list_weekly'.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Get rid of the saved setting 'notification_sound_on'.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "I want to delete the entry for 'event_registration_id_458'.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Clear out the data keyed as 'temporary_cache_001'.", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}

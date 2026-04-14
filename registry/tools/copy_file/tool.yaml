@@ -1,0 +1,26 @@
+id: copy_file
+display_name: Copy File
+description: Copy a file or directory to a new location.
+interface_type: python
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: file_system
+tags:
+- files
+- workspace
+- local-io
+- file-system
+- copy_file
+parameters:
+  type: object
+  properties:
+    source:
+      type: string
+    destination:
+      type: string
+  required:
+  - source
+  - destination

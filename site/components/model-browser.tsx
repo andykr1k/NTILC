@@ -81,6 +81,7 @@ export function ModelBrowser({ releases }: ModelBrowserProps) {
               className="w-full rounded-none border border-[color:var(--line)] bg-[rgba(8,15,24,0.8)] px-4 py-3 text-sm text-[color:var(--ink)] outline-none focus:border-[color:var(--accent)]"
             >
               <option value="all">All statuses</option>
+              <option value="ready">Ready</option>
               <option value="published">Published</option>
               <option value="planned">Planned</option>
               <option value="deprecated">Deprecated</option>
@@ -143,7 +144,7 @@ export function ModelBrowser({ releases }: ModelBrowserProps) {
                     ))}
                   </div>
                 ) : (
-                  <p className="mt-3 text-sm text-[color:var(--muted)]">Metrics will appear here once the release is published.</p>
+                  <p className="mt-3 text-sm text-[color:var(--muted)]">Metrics will appear here once the checkpoint is synced.</p>
                 )}
               </div>
 
@@ -157,6 +158,10 @@ export function ModelBrowser({ releases }: ModelBrowserProps) {
                   >
                     Download checkpoint
                   </a>
+                ) : release.status === "ready" ? (
+                  <span className="border border-dashed border-[color:var(--line)] px-4 py-2 font-semibold uppercase tracking-[0.14em] text-[color:var(--muted)]">
+                    Ready for Hugging Face
+                  </span>
                 ) : (
                   <span className="border border-dashed border-[color:var(--line)] px-4 py-2 font-semibold uppercase tracking-[0.14em] text-[color:var(--muted)]">
                     Awaiting artifact
@@ -169,7 +174,7 @@ export function ModelBrowser({ releases }: ModelBrowserProps) {
                     rel="noreferrer"
                     className="font-semibold text-[color:var(--accent-strong)]"
                   >
-                    View on Hugging Face
+                    {release.status === "published" ? "View on Hugging Face" : "Open Hugging Face org"}
                   </a>
                 ) : null}
               </div>

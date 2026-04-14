@@ -1,0 +1,37 @@
+id: parse_document
+display_name: Parse Document
+description: Extract structured data or clean text from unstructured documents (PDF,
+  DOCX, HTML, etc.).
+interface_type: python
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: structured_data
+tags:
+- documents
+- formats
+- parsing
+- structured-data
+- parse_document
+parameters:
+  type: object
+  properties:
+    path:
+      type: string
+      description: File path or URL of the document
+    extract:
+      type: array
+      items:
+        type: string
+        enum:
+        - text
+        - tables
+        - images
+        - metadata
+      default:
+      - text
+      description: What to extract from the document
+  required:
+  - path

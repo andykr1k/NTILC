@@ -1,0 +1,12 @@
+{"query": "Run the third cell in my data analysis notebook located at /projects/analysis.ipynb", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Execute the cell with index 5 in the report generation notebook", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Please run cell number 2 in /home/user/research/summary.ipynb", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "I need to execute a specific cell in my finance notebook without changing the code", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Run the cell at index 0 in the script found at /models/train.ipynb", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Execute the fourth cell in the dashboard notebook using the existing code", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Please run cell 7 in /data/cleanup.ipynb and show me the result", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Run the second cell in my visualization notebook located at /plots/charts.ipynb", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Execute cell index 3 in the testing notebook without modifying anything", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "I want to run the first cell in /analysis/final_report.ipynb", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Please execute the cell at position 6 in my machine learning notebook", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}
+{"query": "Run the last cell in the data processing notebook at /scripts/process.ipynb", "split": "train", "language": "en", "notes": "source=qwen_synthetic; generator=Qwen/Qwen3.5-27B"}

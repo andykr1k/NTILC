@@ -1,0 +1,26 @@
+id: write_file
+display_name: Write File
+description: Create or overwrite a file with given content.
+interface_type: python
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: file_system
+tags:
+- files
+- workspace
+- local-io
+- file-system
+- write_file
+parameters:
+  type: object
+  properties:
+    path:
+      type: string
+    content:
+      type: string
+  required:
+  - path
+  - content

@@ -1,0 +1,27 @@
+id: web_search
+display_name: Web Search
+description: Search the web for up-to-date information and return relevant results.
+interface_type: http
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: information_retrieval
+tags:
+- retrieval
+- search
+- web
+- information-retrieval
+- web_search
+parameters:
+  type: object
+  properties:
+    query:
+      type: string
+      description: Search query string
+    max_results:
+      type: integer
+      default: 5
+  required:
+  - query

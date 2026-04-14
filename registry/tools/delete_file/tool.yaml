@@ -1,0 +1,27 @@
+id: delete_file
+display_name: Delete File
+description: Delete a file or directory from disk.
+interface_type: python
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: file_system
+tags:
+- files
+- workspace
+- local-io
+- file-system
+- delete_file
+parameters:
+  type: object
+  properties:
+    path:
+      type: string
+    recursive:
+      type: boolean
+      default: false
+      description: Required true to delete non-empty directories
+  required:
+  - path

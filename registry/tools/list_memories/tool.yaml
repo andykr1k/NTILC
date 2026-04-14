@@ -1,0 +1,23 @@
+id: list_memories
+display_name: List Memories
+description: List all stored memory keys, optionally filtered by a prefix or pattern.
+interface_type: python
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: memory
+tags:
+- state
+- storage
+- kv
+- memory
+- list_memories
+parameters:
+  type: object
+  properties:
+    prefix:
+      type: string
+      description: Optional prefix to filter keys
+  required: []

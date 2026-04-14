@@ -24,11 +24,12 @@ registry/
 
 ## Workflow
 
-1. Add or update a tool under `registry/tools/<tool-id>/`.
+1. Import the current OSS baseline with `python3 scripts/import_oss_registry.py`, or add/update a tool under `registry/tools/<tool-id>/`.
 2. Run `python3 scripts/build_registry.py`.
 3. Train from `registry/generated/tool_embedding_dataset.jsonl`.
-4. Publish weights to the `OpenToolEmbeddings` Hugging Face organization, then update `registry/models/releases.yaml`.
-5. Re-run `python3 scripts/build_registry.py` so the website picks up the new release metadata.
+4. Sync local checkpoint metadata with `python3 scripts/sync_model_releases.py`.
+5. Publish weights plus model cards to the `OpenToolEmbeddings` Hugging Face organization with `python3 scripts/publish_huggingface_models.py`.
+6. Re-run `python3 scripts/build_registry.py` so the website picks up the new release metadata.
 
 ## Tool Manifest
 

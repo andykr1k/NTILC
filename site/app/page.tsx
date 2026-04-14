@@ -29,6 +29,7 @@ export default async function HomePage() {
   ]);
 
   const publishedCount = modelRegistry.releases.filter((item) => item.status === "published").length;
+  const readyCount = modelRegistry.releases.filter((item) => item.status === "ready").length;
 
   return (
     <div className="space-y-[4.5rem] pb-20 xl:space-y-20">
@@ -114,8 +115,8 @@ export default async function HomePage() {
                   <div className="mt-2 text-3xl font-semibold text-[color:var(--ink)]">{toolRegistry.categories.length}</div>
                 </div>
                 <div className="metric-chip rounded-none px-4 py-4">
-                  <div className="text-xs uppercase tracking-[0.16em] text-[color:var(--muted)]">Published</div>
-                  <div className="mt-2 text-3xl font-semibold text-[color:var(--ink)]">{publishedCount}</div>
+                  <div className="text-xs uppercase tracking-[0.16em] text-[color:var(--muted)]">Ready</div>
+                  <div className="mt-2 text-3xl font-semibold text-[color:var(--ink)]">{readyCount || publishedCount}</div>
                 </div>
               </div>
             </div>
@@ -129,8 +130,9 @@ export default async function HomePage() {
               </div>
             </div>
             <p className="mt-5 max-w-lg text-base leading-8 text-[color:var(--muted)]">
-              The repo explains the system and accepts tool contributions. The OpenToolEmbeddings organization is where
-              checkpoints should live so downloads stay obvious and centralized.
+              The repo explains the system, carries the registry, and accepts new tool contributions. The
+              OpenToolEmbeddings organization is where staged checkpoints become public downloads once the release
+              bundle is pushed upstream.
             </p>
           </div>
         </div>
@@ -182,9 +184,9 @@ export default async function HomePage() {
           <h2 className="mt-5 text-5xl sm:text-6xl">Contribute the tool. Build the snapshot. Train the release.</h2>
           <div className="mt-8 grid gap-4 lg:grid-cols-3">
             {[
-              "Add a tool manifest and examples in GitHub.",
-              "Set a valid parent_id for the hierarchical model.",
-              "Train from generated registry artifacts and publish to Hugging Face.",
+              "Import or add tool manifests and examples in the registry.",
+              "Build the snapshot with explicit parent_id values.",
+              "Sync release metadata, then publish the checkpoint bundle to Hugging Face.",
             ].map((step, index) => (
               <div key={step} className="metric-chip rounded-none px-4 py-4">
                 <div className="eyebrow">0{index + 1}</div>

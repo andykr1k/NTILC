@@ -1,13 +1,42 @@
 {
   "version": 1,
-  "generated_at": "2026-04-11T18:58:25Z",
-  "tool_count": 0,
-  "example_count": 0,
-  "category_count": 0,
-  "model_release_count": 0,
-  "published_model_count": 0,
+  "generated_at": "2026-04-14T04:35:26Z",
+  "tool_count": 26,
+  "example_count": 312,
+  "category_count": 6,
+  "model_release_count": 6,
+  "published_model_count": 6,
   "categories": [
-
+    {
+      "id": "computation",
+      "name": "Computation",
+      "tool_count": 5
+    },
+    {
+      "id": "external_integrations",
+      "name": "External Integrations",
+      "tool_count": 1
+    },
+    {
+      "id": "file_system",
+      "name": "File System",
+      "tool_count": 10
+    },
+    {
+      "id": "information_retrieval",
+      "name": "Information Retrieval",
+      "tool_count": 3
+    },
+    {
+      "id": "memory",
+      "name": "Memory",
+      "tool_count": 5
+    },
+    {
+      "id": "structured_data",
+      "name": "Structured Data",
+      "tool_count": 2
+    }
   ],
   "artifacts": {
     "tools": "registry/generated/tools.json",

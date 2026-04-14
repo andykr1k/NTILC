@@ -1,0 +1,31 @@
+id: run_notebook_cell
+display_name: Run Notebook Cell
+description: Execute a cell in a Jupyter notebook and return the output.
+interface_type: python
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: computation
+tags:
+- execution
+- analysis
+- runtime
+- computation
+- run_notebook_cell
+parameters:
+  type: object
+  properties:
+    notebook_path:
+      type: string
+      description: Path to the .ipynb file
+    cell_index:
+      type: integer
+      description: Zero-based index of the cell to run
+    code:
+      type: string
+      description: 'Optional: code to inject and run instead of the existing cell
+        content'
+  required:
+  - notebook_path

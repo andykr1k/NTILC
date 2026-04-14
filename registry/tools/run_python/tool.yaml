@@ -1,0 +1,23 @@
+id: run_python
+display_name: Run Python
+description: Execute Python code for computation, data processing, or scripting tasks.
+interface_type: python
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: computation
+tags:
+- execution
+- analysis
+- runtime
+- computation
+- run_python
+parameters:
+  type: object
+  properties:
+    code:
+      type: string
+  required:
+  - code

@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "generated_at": "2026-04-14T03:53:19Z",
+  "organization": "OpenToolEmbeddings",
+  "organization_url": "https://huggingface.co/OpenToolEmbeddings",
+  "dataset_version": "oss-qwen3.5-27b-26tools-312queries-v0.1.0",
+  "releases": [
+    {
+      "id": "ntilc-normal-prototype-ce-v0-1-0",
+      "title": "NTILC Normal Prototype-CE v0.1.0",
+      "repo_id": "OpenToolEmbeddings/ntilc-normal-prototype-ce-v0-1-0",
+      "repository_url": "https://huggingface.co/OpenToolEmbeddings/ntilc-normal-prototype-ce-v0-1-0",
+      "download_url": "https://huggingface.co/OpenToolEmbeddings/ntilc-normal-prototype-ce-v0-1-0/resolve/main/best.pt",
+      "checkpoint_path": "/scratch4/home/akrik/NTILC/data/OSS/output/normal/prototype_ce/best.pt",
+      "metrics_path": "/scratch4/home/akrik/NTILC/data/OSS/output/normal/prototype_ce/metrics.json",
+      "card_path": "/scratch4/home/akrik/NTILC/registry/models/cards/ntilc-normal-prototype-ce-v0-1-0.md",
+      "sha256": "3077554cde03c765a9262f04f54630304fad06fee1e9bb21d76ceb2bdd75ae06",
+      "architecture": "normal",
+      "loss": "prototype_ce"
+    },
+    {
+      "id": "ntilc-normal-contrastive-v0-1-0",
+      "title": "NTILC Normal Contrastive v0.1.0",
+      "repo_id": "OpenToolEmbeddings/ntilc-normal-contrastive-v0-1-0",
+      "repository_url": "https://huggingface.co/OpenToolEmbeddings/ntilc-normal-contrastive-v0-1-0",
+      "download_url": "https://huggingface.co/OpenToolEmbeddings/ntilc-normal-contrastive-v0-1-0/resolve/main/best.pt",
+      "checkpoint_path": "/scratch4/home/akrik/NTILC/data/OSS/output/normal/contrastive/best.pt",
+      "metrics_path": "/scratch4/home/akrik/NTILC/data/OSS/output/normal/contrastive/metrics.json",
+      "card_path": "/scratch4/home/akrik/NTILC/registry/models/cards/ntilc-normal-contrastive-v0-1-0.md",
+      "sha256": "00523d995468866ebdc51f23e7f5ed2f12fce8e09437272393c049aee6b98ef8",
+      "architecture": "normal",
+      "loss": "contrastive"
+    },
+    {
+      "id": "ntilc-normal-circle-v0-1-0",
+      "title": "NTILC Normal Circle v0.1.0",
+      "repo_id": "OpenToolEmbeddings/ntilc-normal-circle-v0-1-0",
+      "repository_url": "https://huggingface.co/OpenToolEmbeddings/ntilc-normal-circle-v0-1-0",
+      "download_url": "https://huggingface.co/OpenToolEmbeddings/ntilc-normal-circle-v0-1-0/resolve/main/best.pt",
+      "checkpoint_path": "/scratch4/home/akrik/NTILC/data/OSS/output/normal/circle/best.pt",
+      "metrics_path": "/scratch4/home/akrik/NTILC/data/OSS/output/normal/circle/metrics.json",
+      "card_path": "/scratch4/home/akrik/NTILC/registry/models/cards/ntilc-normal-circle-v0-1-0.md",
+      "sha256": "a1cdae6bf2266e1bacd0adb63ca51fe63c8678f50c75b0eae56e221d632de705",
+      "architecture": "normal",
+      "loss": "circle"
+    },
+    {
+      "id": "ntilc-hierarchical-prototype-ce-v0-1-0",
+      "title": "NTILC Hierarchical Prototype-CE v0.1.0",
+      "repo_id": "OpenToolEmbeddings/ntilc-hierarchical-prototype-ce-v0-1-0",
+      "repository_url": "https://huggingface.co/OpenToolEmbeddings/ntilc-hierarchical-prototype-ce-v0-1-0",
+      "download_url": "https://huggingface.co/OpenToolEmbeddings/ntilc-hierarchical-prototype-ce-v0-1-0/resolve/main/best.pt",
+      "checkpoint_path": "/scratch4/home/akrik/NTILC/data/OSS/output/hierarchical/prototype_ce/best.pt",
+      "metrics_path": "/scratch4/home/akrik/NTILC/data/OSS/output/hierarchical/prototype_ce/metrics.json",
+      "card_path": "/scratch4/home/akrik/NTILC/registry/models/cards/ntilc-hierarchical-prototype-ce-v0-1-0.md",
+      "sha256": "7eae6130003a091bef3c81d1d084b35d137974d0f4f5bc2fd61bd43684cc446f",
+      "architecture": "hierarchical",
+      "loss": "prototype_ce"
+    },
+    {
+      "id": "ntilc-hierarchical-contrastive-v0-1-0",
+      "title": "NTILC Hierarchical Contrastive v0.1.0",
+      "repo_id": "OpenToolEmbeddings/ntilc-hierarchical-contrastive-v0-1-0",
+      "repository_url": "https://huggingface.co/OpenToolEmbeddings/ntilc-hierarchical-contrastive-v0-1-0",
+      "download_url": "https://huggingface.co/OpenToolEmbeddings/ntilc-hierarchical-contrastive-v0-1-0/resolve/main/best.pt",
+      "checkpoint_path": "/scratch4/home/akrik/NTILC/data/OSS/output/hierarchical/contrastive/best.pt",
+      "metrics_path": "/scratch4/home/akrik/NTILC/data/OSS/output/hierarchical/contrastive/metrics.json",
+      "card_path": "/scratch4/home/akrik/NTILC/registry/models/cards/ntilc-hierarchical-contrastive-v0-1-0.md",
+      "sha256": "6b1be4ecd2535992ad1ba99505597df360ac5dbe4dcf6dda237a370951092363",
+      "architecture": "hierarchical",
+      "loss": "contrastive"
+    },
+    {
+      "id": "ntilc-hierarchical-circle-v0-1-0",
+      "title": "NTILC Hierarchical Circle v0.1.0",
+      "repo_id": "OpenToolEmbeddings/ntilc-hierarchical-circle-v0-1-0",
+      "repository_url": "https://huggingface.co/OpenToolEmbeddings/ntilc-hierarchical-circle-v0-1-0",
+      "download_url": "https://huggingface.co/OpenToolEmbeddings/ntilc-hierarchical-circle-v0-1-0/resolve/main/best.pt",
+      "checkpoint_path": "/scratch4/home/akrik/NTILC/data/OSS/output/hierarchical/circle/best.pt",
+      "metrics_path": "/scratch4/home/akrik/NTILC/data/OSS/output/hierarchical/circle/metrics.json",
+      "card_path": "/scratch4/home/akrik/NTILC/registry/models/cards/ntilc-hierarchical-circle-v0-1-0.md",
+      "sha256": "24b334c2cc674474f91af91b697db58657d51d79ea386a1f1a3207b4b2a01944",
+      "architecture": "hierarchical",
+      "loss": "circle"
+    }
+  ]
+}

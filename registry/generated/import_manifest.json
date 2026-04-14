@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "tools_imported": 26,
+  "examples_imported": 312,
+  "source": {
+    "tools_path": "/scratch4/home/akrik/NTILC/data/OSS/tools.json",
+    "dataset_path": "/scratch4/home/akrik/NTILC/data/OSS/tool_embedding_dataset.jsonl",
+    "hierarchy_path": "/scratch4/home/akrik/NTILC/data/OSS/tool_embedding_dataset_hierarchy.json"
+  },
+  "maintainers": [
+    "andykr1k"
+  ],
+  "source_repo": "https://github.com/andykr1k/NTILC",
+  "homepage": "https://github.com/andykr1k/NTILC",
+  "license": "MIT"
+}

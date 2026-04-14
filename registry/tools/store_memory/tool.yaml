@@ -1,0 +1,26 @@
+id: store_memory
+display_name: Store Memory
+description: Store information for later retrieval.
+interface_type: python
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: memory
+tags:
+- state
+- storage
+- kv
+- memory
+- store_memory
+parameters:
+  type: object
+  properties:
+    key:
+      type: string
+    value:
+      type: string
+  required:
+  - key
+  - value

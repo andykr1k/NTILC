@@ -1,8 +1,1101 @@
 {
   "version": 1,
-  "generated_at": "2026-04-11T18:58:25Z",
+  "generated_at": "2026-04-14T04:35:26Z",
   "categories": [
-
+    {
+      "id": "computation",
+      "name": "Computation",
+      "summary": "Execute code, run notebook or SQL workloads, and perform local calculations."
+    },
+    {
+      "id": "external_integrations",
+      "name": "External Integrations",
+      "summary": "Call external APIs and services through generic HTTP request workflows."
+    },
+    {
+      "id": "file_system",
+      "name": "File System",
+      "summary": "Read, write, inspect, search, and manipulate local files and directories."
+    },
+    {
+      "id": "information_retrieval",
+      "name": "Information Retrieval",
+      "summary": "Search the web, fetch remote content, and query retrieval-oriented indexes."
+    },
+    {
+      "id": "memory",
+      "name": "Memory",
+      "summary": "Persist, retrieve, update, and inspect lightweight key-value memory entries."
+    },
+    {
+      "id": "structured_data",
+      "name": "Structured Data",
+      "summary": "Parse documents and convert content between structured data formats."
+    }
   ],
-  "tools": []
+  "tools": [
+    {
+      "id": "calculate",
+      "display_name": "Calculate",
+      "description": "Evaluate a mathematical expression and return the result.",
+      "interface_type": "python",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "computation",
+      "parent_category": "computation",
+      "tags": [
+        "execution",
+        "analysis",
+        "runtime",
+        "computation",
+        "calculate"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "expression": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "expression"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/calculate"
+    },
+    {
+      "id": "convert_format",
+      "display_name": "Convert Format",
+      "description": "Transform data between structured formats such as JSON, CSV, XML, YAML, and Markdown.",
+      "interface_type": "python",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "structured_data",
+      "parent_category": "structured_data",
+      "tags": [
+        "documents",
+        "formats",
+        "parsing",
+        "structured-data",
+        "convert_format"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "string",
+            "description": "Input data as a string"
+          },
+          "from_format": {
+            "type": "string",
+            "enum": [
+              "json",
+              "csv",
+              "xml",
+              "yaml",
+              "markdown",
+              "toml"
+            ]
+          },
+          "to_format": {
+            "type": "string",
+            "enum": [
+              "json",
+              "csv",
+              "xml",
+              "yaml",
+              "markdown",
+              "toml"
+            ]
+          }
+        },
+        "required": [
+          "input",
+          "from_format",
+          "to_format"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/convert_format"
+    },
+    {
+      "id": "copy_file",
+      "display_name": "Copy File",
+      "description": "Copy a file or directory to a new location.",
+      "interface_type": "python",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "file_system",
+      "parent_category": "file_system",
+      "tags": [
+        "files",
+        "workspace",
+        "local-io",
+        "file-system",
+        "copy_file"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "destination": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "destination"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/copy_file"
+    },
+    {
+      "id": "delete_file",
+      "display_name": "Delete File",
+      "description": "Delete a file or directory from disk.",
+      "interface_type": "python",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "file_system",
+      "parent_category": "file_system",
+      "tags": [
+        "files",
+        "workspace",
+        "local-io",
+        "file-system",
+        "delete_file"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "recursive": {
+            "type": "boolean",
+            "default": false,
+            "description": "Required true to delete non-empty directories"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/delete_file"
+    },
+    {
+      "id": "delete_memory",
+      "display_name": "Delete Memory",
+      "description": "Delete a stored memory entry by key.",
+      "interface_type": "python",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "memory",
+      "parent_category": "memory",
+      "tags": [
+        "state",
+        "storage",
+        "kv",
+        "memory",
+        "delete_memory"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/delete_memory"
+    },
+    {
+      "id": "edit_file",
+      "display_name": "Edit File",
+      "description": "Edit or append content to an existing file.",
+      "interface_type": "python",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "file_system",
+      "parent_category": "file_system",
+      "tags": [
+        "files",
+        "workspace",
+        "local-io",
+        "file-system",
+        "edit_file"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "instruction": {
+            "type": "string",
+            "description": "Description of the edit to perform"
+          }
+        },
+        "required": [
+          "path",
+          "instruction"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/edit_file"
+    },
+    {
+      "id": "fetch_file_metadata",
+      "display_name": "Fetch File Metadata",
+      "description": "Get metadata for a file (size, timestamps, MIME type, permissions) without reading its contents.",
+      "interface_type": "python",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "file_system",
+      "parent_category": "file_system",
+      "tags": [
+        "files",
+        "workspace",
+        "local-io",
+        "file-system",
+        "fetch_file_metadata"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/fetch_file_metadata"
+    },
+    {
+      "id": "fetch_url",
+      "display_name": "Fetch URL",
+      "description": "Directly fetch and parse the content of a webpage by URL.",
+      "interface_type": "http",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "information_retrieval",
+      "parent_category": "information_retrieval",
+      "tags": [
+        "retrieval",
+        "search",
+        "web",
+        "information-retrieval",
+        "fetch_url"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The URL to fetch"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "text",
+              "markdown",
+              "html"
+            ],
+            "default": "markdown",
+            "description": "Output format for the fetched content"
+          }
+        },
+        "required": [
+          "url"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/fetch_url"
+    },
+    {
+      "id": "grep",
+      "display_name": "Grep",
+      "description": "Search for a pattern in files and return matching lines.",
+      "interface_type": "cli",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "file_system",
+      "parent_category": "file_system",
+      "tags": [
+        "files",
+        "workspace",
+        "local-io",
+        "file-system",
+        "grep"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern",
+          "path"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/grep"
+    },
+    {
+      "id": "list_directory",
+      "display_name": "List Directory",
+      "description": "List files and directories within a given path.",
+      "interface_type": "python",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "file_system",
+      "parent_category": "file_system",
+      "tags": [
+        "files",
+        "workspace",
+        "local-io",
+        "file-system",
+        "list_directory"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Directory path to list"
+          },
+          "recursive": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether to list recursively"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/list_directory"
+    },
+    {
+      "id": "list_memories",
+      "display_name": "List Memories",
+      "description": "List all stored memory keys, optionally filtered by a prefix or pattern.",
+      "interface_type": "python",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "memory",
+      "parent_category": "memory",
+      "tags": [
+        "state",
+        "storage",
+        "kv",
+        "memory",
+        "list_memories"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prefix": {
+            "type": "string",
+            "description": "Optional prefix to filter keys"
+          }
+        },
+        "required": []
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/list_memories"
+    },
+    {
+      "id": "move_file",
+      "display_name": "Move File",
+      "description": "Move or rename a file or directory.",
+      "interface_type": "python",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "file_system",
+      "parent_category": "file_system",
+      "tags": [
+        "files",
+        "workspace",
+        "local-io",
+        "file-system",
+        "move_file"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "Source file or directory path"
+          },
+          "destination": {
+            "type": "string",
+            "description": "Destination path"
+          }
+        },
+        "required": [
+          "source",
+          "destination"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/move_file"
+    },
+    {
+      "id": "parse_document",
+      "display_name": "Parse Document",
+      "description": "Extract structured data or clean text from unstructured documents (PDF, DOCX, HTML, etc.).",
+      "interface_type": "python",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "structured_data",
+      "parent_category": "structured_data",
+      "tags": [
+        "documents",
+        "formats",
+        "parsing",
+        "structured-data",
+        "parse_document"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path or URL of the document"
+          },
+          "extract": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "text",
+                "tables",
+                "images",
+                "metadata"
+              ]
+            },
+            "default": [
+              "text"
+            ],
+            "description": "What to extract from the document"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/parse_document"
+    },
+    {
+      "id": "read_file",
+      "display_name": "Read File",
+      "description": "Read the contents of a file from disk.",
+      "interface_type": "python",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "file_system",
+      "parent_category": "file_system",
+      "tags": [
+        "files",
+        "workspace",
+        "local-io",
+        "file-system",
+        "read_file"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/read_file"
+    },
+    {
+      "id": "retrieve_memory",
+      "display_name": "Retrieve Memory",
+      "description": "Retrieve stored information based on a query.",
+      "interface_type": "python",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "memory",
+      "parent_category": "memory",
+      "tags": [
+        "state",
+        "storage",
+        "kv",
+        "memory",
+        "retrieve_memory"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/retrieve_memory"
+    },
+    {
+      "id": "run_bash_command",
+      "display_name": "Run Bash Command",
+      "description": "Execute a bash command in the system shell.",
+      "interface_type": "cli",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "file_system",
+      "parent_category": "file_system",
+      "tags": [
+        "files",
+        "workspace",
+        "local-io",
+        "file-system",
+        "run_bash_command"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/run_bash_command"
+    },
+    {
+      "id": "run_javascript",
+      "display_name": "Run JavaScript",
+      "description": "Execute JavaScript (Node.js) code for browser-native logic, JSON transforms, or Node tasks.",
+      "interface_type": "javascript",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "computation",
+      "parent_category": "computation",
+      "tags": [
+        "execution",
+        "analysis",
+        "runtime",
+        "computation",
+        "run_javascript"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "JavaScript code to execute"
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/run_javascript"
+    },
+    {
+      "id": "run_notebook_cell",
+      "display_name": "Run Notebook Cell",
+      "description": "Execute a cell in a Jupyter notebook and return the output.",
+      "interface_type": "python",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "computation",
+      "parent_category": "computation",
+      "tags": [
+        "execution",
+        "analysis",
+        "runtime",
+        "computation",
+        "run_notebook_cell"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "notebook_path": {
+            "type": "string",
+            "description": "Path to the .ipynb file"
+          },
+          "cell_index": {
+            "type": "integer",
+            "description": "Zero-based index of the cell to run"
+          },
+          "code": {
+            "type": "string",
+            "description": "Optional: code to inject and run instead of the existing cell content"
+          }
+        },
+        "required": [
+          "notebook_path"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/run_notebook_cell"
+    },
+    {
+      "id": "run_python",
+      "display_name": "Run Python",
+      "description": "Execute Python code for computation, data processing, or scripting tasks.",
+      "interface_type": "python",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "computation",
+      "parent_category": "computation",
+      "tags": [
+        "execution",
+        "analysis",
+        "runtime",
+        "computation",
+        "run_python"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/run_python"
+    },
+    {
+      "id": "run_sql",
+      "display_name": "Run SQL",
+      "description": "Execute a SQL query against a connected database and return results.",
+      "interface_type": "python",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "computation",
+      "parent_category": "computation",
+      "tags": [
+        "execution",
+        "analysis",
+        "runtime",
+        "computation",
+        "run_sql"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "SQL query to execute"
+          },
+          "connection": {
+            "type": "string",
+            "description": "Named database connection or connection string"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/run_sql"
+    },
+    {
+      "id": "search_knowledge_base",
+      "display_name": "Search Knowledge Base",
+      "description": "Perform semantic/vector search over a private document store or embeddings index.",
+      "interface_type": "python",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "information_retrieval",
+      "parent_category": "information_retrieval",
+      "tags": [
+        "retrieval",
+        "search",
+        "web",
+        "information-retrieval",
+        "search_knowledge_base"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Natural language search query"
+          },
+          "top_k": {
+            "type": "integer",
+            "default": 5,
+            "description": "Number of top results to return"
+          },
+          "namespace": {
+            "type": "string",
+            "description": "Optional namespace or collection to scope the search"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/search_knowledge_base"
+    },
+    {
+      "id": "send_http_request",
+      "display_name": "Send HTTP Request",
+      "description": "Make a generic HTTP request to any external REST API.",
+      "interface_type": "http",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "external_integrations",
+      "parent_category": "external_integrations",
+      "tags": [
+        "http",
+        "api",
+        "network",
+        "external-integrations",
+        "send_http_request"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ],
+            "default": "GET"
+          },
+          "headers": {
+            "type": "object",
+            "description": "Key-value map of request headers"
+          },
+          "body": {
+            "type": "string",
+            "description": "Request body (JSON string or plain text)"
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "default": 10000
+          }
+        },
+        "required": [
+          "url"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/send_http_request"
+    },
+    {
+      "id": "store_memory",
+      "display_name": "Store Memory",
+      "description": "Store information for later retrieval.",
+      "interface_type": "python",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "memory",
+      "parent_category": "memory",
+      "tags": [
+        "state",
+        "storage",
+        "kv",
+        "memory",
+        "store_memory"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/store_memory"
+    },
+    {
+      "id": "update_memory",
+      "display_name": "Update Memory",
+      "description": "Atomically update an existing memory entry without full overwrite.",
+      "interface_type": "python",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "memory",
+      "parent_category": "memory",
+      "tags": [
+        "state",
+        "storage",
+        "kv",
+        "memory",
+        "update_memory"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string",
+            "description": "New value to set"
+          },
+          "merge": {
+            "type": "boolean",
+            "default": false,
+            "description": "If true, merge with existing value rather than replacing"
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/update_memory"
+    },
+    {
+      "id": "web_search",
+      "display_name": "Web Search",
+      "description": "Search the web for up-to-date information and return relevant results.",
+      "interface_type": "http",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "information_retrieval",
+      "parent_category": "information_retrieval",
+      "tags": [
+        "retrieval",
+        "search",
+        "web",
+        "information-retrieval",
+        "web_search"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query string"
+          },
+          "max_results": {
+            "type": "integer",
+            "default": 5
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/web_search"
+    },
+    {
+      "id": "write_file",
+      "display_name": "Write File",
+      "description": "Create or overwrite a file with given content.",
+      "interface_type": "python",
+      "source_repo": "https://github.com/andykr1k/NTILC",
+      "homepage": "https://github.com/andykr1k/NTILC",
+      "license": "MIT",
+      "maintainers": [
+        "andykr1k"
+      ],
+      "parent_id": "file_system",
+      "parent_category": "file_system",
+      "tags": [
+        "files",
+        "workspace",
+        "local-io",
+        "file-system",
+        "write_file"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ]
+      },
+      "example_count": 12,
+      "has_tests": false,
+      "registry_path": "registry/tools/write_file"
+    }
+  ]
 }

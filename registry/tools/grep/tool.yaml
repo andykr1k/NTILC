@@ -1,0 +1,26 @@
+id: grep
+display_name: Grep
+description: Search for a pattern in files and return matching lines.
+interface_type: cli
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: file_system
+tags:
+- files
+- workspace
+- local-io
+- file-system
+- grep
+parameters:
+  type: object
+  properties:
+    pattern:
+      type: string
+    path:
+      type: string
+  required:
+  - pattern
+  - path

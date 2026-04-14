@@ -1,0 +1,27 @@
+id: run_sql
+display_name: Run SQL
+description: Execute a SQL query against a connected database and return results.
+interface_type: python
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: computation
+tags:
+- execution
+- analysis
+- runtime
+- computation
+- run_sql
+parameters:
+  type: object
+  properties:
+    query:
+      type: string
+      description: SQL query to execute
+    connection:
+      type: string
+      description: Named database connection or connection string
+  required:
+  - query

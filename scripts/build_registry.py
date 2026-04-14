@@ -22,7 +22,8 @@ GENERATED_DIR = REGISTRY_DIR / "generated"
 ALLOWED_INTERFACE_TYPES = {"cli", "python", "javascript", "http", "other"}
 ALLOWED_ARCHITECTURES = {"normal", "hierarchical"}
 ALLOWED_LOSSES = {"prototype_ce", "contrastive", "circle"}
-ALLOWED_MODEL_STATUSES = {"planned", "published", "deprecated"}
+ALLOWED_MODEL_STATUSES = {"planned", "ready", "published", "deprecated"}
+MODEL_STATUS_ORDER = {"published": 0, "ready": 1, "planned": 2, "deprecated": 3}
 
 
 def parse_args() -> argparse.Namespace:
@@ -234,7 +235,15 @@ def load_model_releases(path: Path) -> list[dict[str, Any]]:
                 "metrics": metrics,
             }
         )
-    return sorted(normalized, key=lambda item: (item["status"] != "published", item["architecture"], item["loss"], item["id"]))
+    return sorted(
+        normalized,
+        key=lambda item: (
+            MODEL_STATUS_ORDER.get(item["status"], 99),
+            item["architecture"],
+            item["loss"],
+            item["id"],
+        ),
+    )
 
 
 def main() -> None:

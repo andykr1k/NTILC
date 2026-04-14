@@ -1,0 +1,27 @@
+id: edit_file
+display_name: Edit File
+description: Edit or append content to an existing file.
+interface_type: python
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: file_system
+tags:
+- files
+- workspace
+- local-io
+- file-system
+- edit_file
+parameters:
+  type: object
+  properties:
+    path:
+      type: string
+    instruction:
+      type: string
+      description: Description of the edit to perform
+  required:
+  - path
+  - instruction

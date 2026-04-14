@@ -1,0 +1,32 @@
+id: fetch_url
+display_name: Fetch URL
+description: Directly fetch and parse the content of a webpage by URL.
+interface_type: http
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: information_retrieval
+tags:
+- retrieval
+- search
+- web
+- information-retrieval
+- fetch_url
+parameters:
+  type: object
+  properties:
+    url:
+      type: string
+      description: The URL to fetch
+    format:
+      type: string
+      enum:
+      - text
+      - markdown
+      - html
+      default: markdown
+      description: Output format for the fetched content
+  required:
+  - url

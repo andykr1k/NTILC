@@ -1,0 +1,31 @@
+id: update_memory
+display_name: Update Memory
+description: Atomically update an existing memory entry without full overwrite.
+interface_type: python
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: memory
+tags:
+- state
+- storage
+- kv
+- memory
+- update_memory
+parameters:
+  type: object
+  properties:
+    key:
+      type: string
+    value:
+      type: string
+      description: New value to set
+    merge:
+      type: boolean
+      default: false
+      description: If true, merge with existing value rather than replacing
+  required:
+  - key
+  - value

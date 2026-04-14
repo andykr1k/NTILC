@@ -49,7 +49,7 @@ export type ModelRelease = {
   encoder: string;
   embedding_dim: number;
   dataset_version: string;
-  status: "planned" | "published" | "deprecated";
+  status: "planned" | "ready" | "published" | "deprecated";
   published_at: string;
   download_url: string;
   repository_url: string;

@@ -1,0 +1,23 @@
+id: delete_memory
+display_name: Delete Memory
+description: Delete a stored memory entry by key.
+interface_type: python
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: memory
+tags:
+- state
+- storage
+- kv
+- memory
+- delete_memory
+parameters:
+  type: object
+  properties:
+    key:
+      type: string
+  required:
+  - key

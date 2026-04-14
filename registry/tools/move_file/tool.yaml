@@ -1,0 +1,28 @@
+id: move_file
+display_name: Move File
+description: Move or rename a file or directory.
+interface_type: python
+source_repo: https://github.com/andykr1k/NTILC
+homepage: https://github.com/andykr1k/NTILC
+license: MIT
+maintainers:
+- andykr1k
+parent_id: file_system
+tags:
+- files
+- workspace
+- local-io
+- file-system
+- move_file
+parameters:
+  type: object
+  properties:
+    source:
+      type: string
+      description: Source file or directory path
+    destination:
+      type: string
+      description: Destination path
+  required:
+  - source
+  - destination
