@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "generated_at": "2026-04-11T18:58:25Z",
+  "tool_count": 0,
+  "example_count": 0,
+  "category_count": 0,
+  "model_release_count": 0,
+  "published_model_count": 0,
+  "categories": [
+
+  ],
+  "artifacts": {
+    "tools": "registry/generated/tools.json",
+    "models": "registry/generated/models.json",
+    "hierarchy": "registry/generated/hierarchy.json",
+    "dataset": "registry/generated/tool_embedding_dataset.jsonl"
+  }
+}

@@ -77,7 +77,15 @@ wandb/
 *.temp
 *.log
 
+# Next.js / Node
+site/node_modules/
+site/.next/
+site/out/
+site/.vercel/
+site/.turbo/
+
 .env
+.codex
 
 # LaTeX auxiliary files
 *.aux

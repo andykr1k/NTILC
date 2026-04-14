@@ -1,0 +1,11 @@
+version: 1
+categories:
+  - id: filesystem.search
+    name: Filesystem Search
+    summary: Search file trees and inspect text inside repositories or local directories.
+  - id: network.http
+    name: HTTP Requests
+    summary: Call remote HTTP APIs or fetch web resources from the command line.
+  - id: media.transform
+    name: Media Transform
+    summary: Convert, trim, or re-encode media assets through scripted pipelines.

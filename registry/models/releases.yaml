@@ -1,0 +1,86 @@
+version: 1
+releases:
+  - id: ntilc-normal-prototype-ce-v0-1-0
+    title: NTILC Normal Prototype-CE v0.1.0
+    architecture: normal
+    loss: prototype_ce
+    encoder: sentence-transformers/all-MiniLM-L6-v2
+    embedding_dim: 128
+    dataset_version: registry-v0.1.0
+    status: planned
+    published_at:
+    download_url:
+    repository_url: https://huggingface.co/OpenToolEmbeddings
+    sha256:
+    notes: Planned release. Public checkpoints should be published under the OpenToolEmbeddings Hugging Face organization.
+    metrics: {}
+  - id: ntilc-normal-contrastive-v0-1-0
+    title: NTILC Normal Contrastive v0.1.0
+    architecture: normal
+    loss: contrastive
+    encoder: sentence-transformers/all-MiniLM-L6-v2
+    embedding_dim: 128
+    dataset_version: registry-v0.1.0
+    status: planned
+    published_at:
+    download_url:
+    repository_url: https://huggingface.co/OpenToolEmbeddings
+    sha256:
+    notes: Planned release. Public checkpoints should be published under the OpenToolEmbeddings Hugging Face organization.
+    metrics: {}
+  - id: ntilc-normal-circle-v0-1-0
+    title: NTILC Normal Circle v0.1.0
+    architecture: normal
+    loss: circle
+    encoder: sentence-transformers/all-MiniLM-L6-v2
+    embedding_dim: 128
+    dataset_version: registry-v0.1.0
+    status: planned
+    published_at:
+    download_url:
+    repository_url: https://huggingface.co/OpenToolEmbeddings
+    sha256:
+    notes: Planned release. Public checkpoints should be published under the OpenToolEmbeddings Hugging Face organization.
+    metrics: {}
+  - id: ntilc-hierarchical-prototype-ce-v0-1-0
+    title: NTILC Hierarchical Prototype-CE v0.1.0
+    architecture: hierarchical
+    loss: prototype_ce
+    encoder: sentence-transformers/all-MiniLM-L6-v2
+    embedding_dim: 128
+    dataset_version: registry-v0.1.0
+    status: planned
+    published_at:
+    download_url:
+    repository_url: https://huggingface.co/OpenToolEmbeddings
+    sha256:
+    notes: Planned release. Public checkpoints should be published under the OpenToolEmbeddings Hugging Face organization.
+    metrics: {}
+  - id: ntilc-hierarchical-contrastive-v0-1-0
+    title: NTILC Hierarchical Contrastive v0.1.0
+    architecture: hierarchical
+    loss: contrastive
+    encoder: sentence-transformers/all-MiniLM-L6-v2
+    embedding_dim: 128
+    dataset_version: registry-v0.1.0
+    status: planned
+    published_at:
+    download_url:
+    repository_url: https://huggingface.co/OpenToolEmbeddings
+    sha256:
+    notes: Planned release. Public checkpoints should be published under the OpenToolEmbeddings Hugging Face organization.
+    metrics: {}
+  - id: ntilc-hierarchical-circle-v0-1-0
+    title: NTILC Hierarchical Circle v0.1.0
+    architecture: hierarchical
+    loss: circle
+    encoder: sentence-transformers/all-MiniLM-L6-v2
+    embedding_dim: 128
+    dataset_version: registry-v0.1.0
+    status: planned
+    published_at:
+    download_url:
+    repository_url: https://huggingface.co/OpenToolEmbeddings
+    sha256:
+    notes: Planned release. Public checkpoints should be published under the OpenToolEmbeddings Hugging Face organization.
+    metrics: {}

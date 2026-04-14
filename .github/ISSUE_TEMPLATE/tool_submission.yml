@@ -1,0 +1,78 @@
+name: Tool submission
+description: Propose a new open-source tool for the central registry.
+title: "[tool]: "
+labels:
+  - tool-submission
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for new tool proposals before opening a registry PR.
+  - type: input
+    id: tool_name
+    attributes:
+      label: Tool name
+      description: Canonical upstream project or command name.
+      placeholder: ripgrep
+    validations:
+      required: true
+  - type: input
+    id: source_repo
+    attributes:
+      label: Source repository
+      description: Public upstream repository URL.
+      placeholder: https://github.com/BurntSushi/ripgrep
+    validations:
+      required: true
+  - type: dropdown
+    id: interface_type
+    attributes:
+      label: Interface type
+      options:
+        - cli
+        - python
+        - javascript
+        - http
+        - other
+    validations:
+      required: true
+  - type: input
+    id: parent_id
+    attributes:
+      label: Parent id
+      description: Category id used by the hierarchical model, for example filesystem.search.
+      placeholder: filesystem.search
+    validations:
+      required: true
+  - type: input
+    id: license
+    attributes:
+      label: License
+      description: SPDX expression or clear license string.
+      placeholder: MIT
+    validations:
+      required: true
+  - type: textarea
+    id: use_cases
+    attributes:
+      label: Main use cases
+      description: Describe the tasks the tool should represent in the embedding space.
+      placeholder: Search code recursively, filter by file glob, and print matching lines.
+    validations:
+      required: true
+  - type: textarea
+    id: example_requests
+    attributes:
+      label: Example natural-language requests
+      description: Add 3-10 representative user requests.
+      placeholder: |
+        Find every TODO under src.
+        Search for CUDA references in the current folder.
+        Look for the string "postgres" in all markdown files.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Extra notes
+      description: Category suggestions, caveats, or prior art.
