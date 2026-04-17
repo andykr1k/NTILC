@@ -45,7 +45,7 @@ export type ModelRelease = {
   id: string;
   title: string;
   architecture: "normal" | "hierarchical";
-  loss: "prototype_ce" | "contrastive" | "circle";
+  loss: "prototype_ce" | "contrastive" | "circle" | "functional_margin";
   encoder: string;
   embedding_dim: number;
   dataset_version: string;

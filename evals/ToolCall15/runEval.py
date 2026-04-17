@@ -26,26 +26,47 @@ from training import embed_texts, load_checkpoint_bundle
 
 
 DATA_DIR = REPO_ROOT / "data" / "ToolCall15"
-DEFAULT_CHECKPOINT_PATH = DATA_DIR / "output" / "best.pt"
+DEFAULT_CHECKPOINT_ROOT = DATA_DIR / "output"
 DEFAULT_BENCHMARK_PATH = DATA_DIR / "benchmark.json"
 DEFAULT_TOOLS_PATH = DATA_DIR / "tools.json"
-DEFAULT_OUTPUT_PATH = DATA_DIR / "output" / "eval" / "eval_summary.json"
+DEFAULT_OUTPUT_PATH = DEFAULT_CHECKPOINT_ROOT / "eval" / "eval_summary.json"
 DEFAULT_QWEN_MODEL_NAME = "Qwen/Qwen3.5-27B"
 DEFAULT_QWEN_DTYPE = "bfloat16"
+
+
+@dataclass(frozen=True)
+class VariantSpec:
+    variant_id: str
+    architecture: str
+    loss_name: str
+    checkpoint_path: Path
+    metrics_path: Path
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Evaluate ToolCall15 using the same notebook-style flow as agent.ipynb: "
-            "Qwen planning, embedding-based tool selection, and Qwen dispatch generation."
+            "Evaluate every saved ToolCall15 embedding-space variant using the same "
+            "notebook-style flow as agent.ipynb: Qwen planning, embedding-based tool "
+            "selection, and Qwen dispatch generation."
         )
     )
     parser.add_argument(
         "--checkpoint-path",
         type=Path,
-        default=DEFAULT_CHECKPOINT_PATH,
-        help="Path to the ToolCall15 embedding checkpoint.",
+        default=None,
+        help="Optional single checkpoint to evaluate. When omitted, all embedding-space variants are discovered under --checkpoint-root.",
+    )
+    parser.add_argument(
+        "--checkpoint-root",
+        type=Path,
+        default=DEFAULT_CHECKPOINT_ROOT,
+        help="Root directory containing saved embedding-space checkpoints.",
+    )
+    parser.add_argument(
+        "--checkpoint-filename",
+        default="best.pt",
+        help="Checkpoint filename to evaluate for each discovered variant.",
     )
     parser.add_argument(
         "--benchmark-path",
@@ -164,6 +185,29 @@ def mean_or_none(values: list[float]) -> float | None:
     if not values:
         return None
     return round_float(sum(values) / len(values))
+
+
+def first_numeric(mapping: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        value = mapping.get(key)
+        if isinstance(value, (int, float)):
+            return float(value)
+    return None
+
+
+def max_numeric(history: list[dict[str, Any]], *keys: str) -> float | None:
+    values: list[float] = []
+    for row in history:
+        value = first_numeric(row, *keys)
+        if value is not None:
+            values.append(value)
+    if not values:
+        return None
+    return max(values)
+
+
+def safe_metric_sort_value(value: float | None) -> float:
+    return float(value) if value is not None else float("-inf")
 
 
 JSON_STRING_PATTERN = re.compile(r'"(?:\\.|[^"\\])*"')
@@ -416,6 +460,25 @@ def build_generation_kwargs(
 
 
 @dataclass
+class SharedRuntime:
+    tool_by_name: dict[str, dict[str, Any]]
+    registry_tool_names: list[str]
+    qwen_model_name: str
+    qwen_device: str
+    qwen_dtype: str
+    qwen_tokenizer: Any
+    structured_qwen: Any
+    plan_output_model: type[BaseModel]
+    planner_generator: Any
+    planner_max_new_tokens: int
+    dispatcher_max_new_tokens: int
+    max_actions: int
+    top_k: int
+    embedding_batch_size: int
+    dispatch_generator_cache: dict[str, tuple[type[BaseModel], Any]] = field(default_factory=dict)
+
+
+@dataclass
 class AgentRuntime:
     embed_model: Any
     embed_tokenizer: Any
@@ -423,6 +486,9 @@ class AgentRuntime:
     embed_device: str
     tool_names: list[str]
     tool_centroids: torch.Tensor
+    checkpoint_architecture: str | None
+    checkpoint_loss_name: str | None
+    encoder_model: str | None
     tool_by_name: dict[str, dict[str, Any]]
     qwen_model_name: str
     qwen_device: str
@@ -439,11 +505,8 @@ class AgentRuntime:
     dispatch_generator_cache: dict[str, tuple[type[BaseModel], Any]] = field(default_factory=dict)
 
 
-def build_runtime(args: argparse.Namespace) -> AgentRuntime:
+def build_shared_runtime(args: argparse.Namespace) -> SharedRuntime:
     qwen_device, embed_device = resolve_runtime_devices(args.qwen_device, args.embed_device)
-
-    embedding_bundle = load_checkpoint_bundle(args.checkpoint_path, device=embed_device)
-    tool_centroids = F.normalize(embedding_bundle["centroids"].to(embed_device), dim=-1)
 
     tools_payload = load_json(args.tools_path)
     tool_registry = tools_payload.get("tools", [])
@@ -480,14 +543,9 @@ def build_runtime(args: argparse.Namespace) -> AgentRuntime:
     structured_qwen = outlines.from_transformers(qwen_model, qwen_tokenizer)
     plan_output_model = build_plan_output_model(args.max_actions)
 
-    return AgentRuntime(
-        embed_model=embedding_bundle["model"],
-        embed_tokenizer=embedding_bundle["tokenizer"],
-        embed_max_length=int(embedding_bundle["max_length"]),
-        embed_device=embed_device,
-        tool_names=list(embedding_bundle["tool_names"]),
-        tool_centroids=tool_centroids,
+    return SharedRuntime(
         tool_by_name=tool_by_name,
+        registry_tool_names=sorted(tool_by_name),
         qwen_model_name=args.qwen_model_name,
         qwen_device=qwen_device,
         qwen_dtype=args.qwen_dtype,
@@ -501,6 +559,167 @@ def build_runtime(args: argparse.Namespace) -> AgentRuntime:
         top_k=args.top_k,
         embedding_batch_size=args.embedding_batch_size,
     )
+
+
+def build_variant_runtime(
+    shared_runtime: SharedRuntime,
+    variant: VariantSpec,
+    embed_device: str,
+) -> AgentRuntime:
+    embedding_bundle = load_checkpoint_bundle(variant.checkpoint_path, device=embed_device)
+    tool_centroids = F.normalize(embedding_bundle["centroids"].to(embed_device), dim=-1)
+
+    return AgentRuntime(
+        embed_model=embedding_bundle["model"],
+        embed_tokenizer=embedding_bundle["tokenizer"],
+        embed_max_length=int(embedding_bundle["max_length"]),
+        embed_device=embed_device,
+        tool_names=list(embedding_bundle["tool_names"]),
+        tool_centroids=tool_centroids,
+        checkpoint_architecture=embedding_bundle.get("architecture"),
+        checkpoint_loss_name=embedding_bundle.get("loss_name"),
+        encoder_model=getattr(embedding_bundle["model"], "encoder_model", None),
+        tool_by_name=shared_runtime.tool_by_name,
+        qwen_model_name=shared_runtime.qwen_model_name,
+        qwen_device=shared_runtime.qwen_device,
+        qwen_dtype=shared_runtime.qwen_dtype,
+        qwen_tokenizer=shared_runtime.qwen_tokenizer,
+        structured_qwen=shared_runtime.structured_qwen,
+        plan_output_model=shared_runtime.plan_output_model,
+        planner_generator=shared_runtime.planner_generator,
+        planner_max_new_tokens=shared_runtime.planner_max_new_tokens,
+        dispatcher_max_new_tokens=shared_runtime.dispatcher_max_new_tokens,
+        max_actions=shared_runtime.max_actions,
+        top_k=shared_runtime.top_k,
+        embedding_batch_size=shared_runtime.embedding_batch_size,
+        dispatch_generator_cache=shared_runtime.dispatch_generator_cache,
+    )
+
+
+def read_training_history(metrics_path: Path) -> list[dict[str, Any]]:
+    if not metrics_path.is_file():
+        return []
+
+    payload = load_json(metrics_path)
+    if not isinstance(payload, list):
+        return []
+
+    return [row for row in payload if isinstance(row, dict)]
+
+
+def summarize_training_history(
+    history: list[dict[str, Any]],
+    architecture: str,
+) -> dict[str, Any] | None:
+    if not history:
+        return None
+
+    last_row = history[-1]
+    summary: dict[str, Any] = {
+        "epochs": len(history),
+        "best_epoch": (
+            int(last_row["best_epoch"])
+            if isinstance(last_row.get("best_epoch"), int)
+            else None
+        ),
+    }
+
+    if architecture == "hierarchical":
+        summary.update(
+            {
+                "best_val_tool_retrieval_accuracy": round_float(
+                    max_numeric(
+                        history,
+                        "best_val_tool_retrieval_accuracy",
+                        "val_tool_retrieval_accuracy",
+                    )
+                ),
+                "final_val_tool_retrieval_accuracy": round_float(
+                    first_numeric(last_row, "val_tool_retrieval_accuracy")
+                ),
+                "best_val_parent_retrieval_accuracy": round_float(
+                    max_numeric(
+                        history,
+                        "best_val_parent_retrieval_accuracy",
+                        "val_parent_retrieval_accuracy",
+                    )
+                ),
+                "final_val_parent_retrieval_accuracy": round_float(
+                    first_numeric(last_row, "val_parent_retrieval_accuracy")
+                ),
+            }
+        )
+    else:
+        summary.update(
+            {
+                "best_val_retrieval_accuracy": round_float(
+                    max_numeric(
+                        history,
+                        "best_val_retrieval_accuracy",
+                        "val_retrieval_accuracy",
+                    )
+                ),
+                "final_val_retrieval_accuracy": round_float(
+                    first_numeric(last_row, "val_retrieval_accuracy")
+                ),
+                "final_val_classification_accuracy": round_float(
+                    first_numeric(last_row, "val_classification_accuracy")
+                ),
+            }
+        )
+
+    return summary
+
+
+def variant_spec_from_checkpoint_path(
+    checkpoint_path: Path,
+    checkpoint_root: Path | None = None,
+) -> VariantSpec:
+    architecture = "legacy"
+    loss_name = "single_checkpoint"
+
+    if checkpoint_root is not None:
+        try:
+            relative_parts = checkpoint_path.resolve().relative_to(checkpoint_root.resolve()).parts
+        except ValueError:
+            relative_parts = ()
+        if len(relative_parts) >= 3:
+            architecture = relative_parts[0]
+            loss_name = relative_parts[1]
+    elif checkpoint_path.parent.name not in {"output", "eval"}:
+        architecture_candidate = checkpoint_path.parent.parent.name
+        loss_candidate = checkpoint_path.parent.name
+        if architecture_candidate:
+            architecture = architecture_candidate
+            loss_name = loss_candidate
+
+    variant_id = f"{architecture}/{loss_name}"
+    return VariantSpec(
+        variant_id=variant_id,
+        architecture=architecture,
+        loss_name=loss_name,
+        checkpoint_path=checkpoint_path,
+        metrics_path=checkpoint_path.parent / "metrics.json",
+    )
+
+
+def discover_variants(
+    checkpoint_root: Path,
+    checkpoint_filename: str,
+) -> list[VariantSpec]:
+    variants = [
+        variant_spec_from_checkpoint_path(checkpoint_path, checkpoint_root=checkpoint_root)
+        for checkpoint_path in sorted(checkpoint_root.glob(f"*/*/{checkpoint_filename}"))
+        if checkpoint_path.is_file()
+    ]
+    if variants:
+        return variants
+
+    legacy_checkpoint_path = checkpoint_root / checkpoint_filename
+    if legacy_checkpoint_path.is_file():
+        return [variant_spec_from_checkpoint_path(legacy_checkpoint_path, checkpoint_root=checkpoint_root)]
+
+    return []
 
 
 def get_planner_generator(runtime: AgentRuntime):
@@ -862,69 +1081,351 @@ def build_aggregate_metrics(scenario_reports: list[dict[str, Any]]) -> dict[str,
     }
 
 
+def evaluate_variant(
+    variant: VariantSpec,
+    shared_runtime: SharedRuntime,
+    scenarios: list[dict[str, Any]],
+    benchmark_tool_names: set[str],
+    embed_device: str,
+) -> dict[str, Any]:
+    history = read_training_history(variant.metrics_path)
+    training_summary = summarize_training_history(history, variant.architecture)
+
+    warnings: list[str] = []
+    try:
+        runtime = build_variant_runtime(
+            shared_runtime=shared_runtime,
+            variant=variant,
+            embed_device=embed_device,
+        )
+        resolved_architecture = runtime.checkpoint_architecture or variant.architecture
+        resolved_loss_name = runtime.checkpoint_loss_name or variant.loss_name
+        resolved_variant_id = f"{resolved_architecture}/{resolved_loss_name}"
+        training_summary = summarize_training_history(history, resolved_architecture)
+        tool_name_set = set(runtime.tool_names)
+        missing_benchmark_tools = sorted(benchmark_tool_names - tool_name_set)
+        if missing_benchmark_tools:
+            warnings.append(
+                "Benchmark tools missing from checkpoint centroids: "
+                + ", ".join(missing_benchmark_tools)
+            )
+
+        tools_without_registry_entry = sorted(tool_name_set - set(shared_runtime.tool_by_name))
+        if tools_without_registry_entry:
+            warnings.append(
+                "Checkpoint tools missing from tools.json: "
+                + ", ".join(tools_without_registry_entry)
+            )
+
+        scenario_reports = [run_scenario(runtime, scenario) for scenario in scenarios]
+        aggregate_metrics = build_aggregate_metrics(scenario_reports)
+
+        success_count = sum(1 for row in scenario_reports if row["status"] == "ok")
+        error_count = len(scenario_reports) - success_count
+
+        return {
+            "variant_id": resolved_variant_id,
+            "architecture": resolved_architecture,
+            "loss_name": resolved_loss_name,
+            "status": "ok",
+            "warnings": warnings,
+            "error_message": None,
+            "error_traceback": None,
+            "paths": {
+                "checkpoint_path": str(variant.checkpoint_path.resolve()),
+                "metrics_path": str(variant.metrics_path.resolve()),
+            },
+            "runtime": {
+                "qwen_model_name": runtime.qwen_model_name,
+                "qwen_device": runtime.qwen_device,
+                "qwen_dtype": runtime.qwen_dtype,
+                "embed_device": runtime.embed_device,
+                "top_k": runtime.top_k,
+                "max_actions": runtime.max_actions,
+                "planner_max_new_tokens": runtime.planner_max_new_tokens,
+                "dispatcher_max_new_tokens": runtime.dispatcher_max_new_tokens,
+                "embedding_batch_size": runtime.embedding_batch_size,
+                "tool_count": len(runtime.tool_names),
+                "embed_max_length": runtime.embed_max_length,
+                "encoder_model": runtime.encoder_model,
+                "checkpoint_architecture": runtime.checkpoint_architecture,
+                "checkpoint_loss_name": runtime.checkpoint_loss_name,
+            },
+            "training": training_summary,
+            "counts": {
+                "total_scenarios": len(scenario_reports),
+                "successful_scenarios": success_count,
+                "error_scenarios": error_count,
+                "evaluable_scenarios": sum(
+                    1 for row in scenario_reports if row.get("expected_tools")
+                ),
+                "behavior_only_scenarios": sum(
+                    1 for row in scenario_reports if row.get("expected_behavior") is not None
+                ),
+                "no_tool_scenarios": sum(
+                    1
+                    for row in scenario_reports
+                    if "expected_tools" in row and not row.get("expected_tools")
+                ),
+                "single_tool_scenarios": sum(
+                    1 for row in scenario_reports if len(row.get("expected_tools", [])) == 1
+                ),
+                "multi_tool_scenarios": sum(
+                    1 for row in scenario_reports if len(row.get("expected_tools", [])) > 1
+                ),
+            },
+            "metrics": aggregate_metrics,
+            "tool_names": runtime.tool_names,
+            "scenarios": scenario_reports,
+        }
+    except Exception as exc:
+        return {
+            "variant_id": variant.variant_id,
+            "architecture": variant.architecture,
+            "loss_name": variant.loss_name,
+            "status": "error",
+            "warnings": warnings,
+            "error_message": str(exc),
+            "error_traceback": traceback.format_exc(limit=5),
+            "paths": {
+                "checkpoint_path": str(variant.checkpoint_path.resolve()),
+                "metrics_path": str(variant.metrics_path.resolve()),
+            },
+            "runtime": {
+                "qwen_model_name": shared_runtime.qwen_model_name,
+                "qwen_device": shared_runtime.qwen_device,
+                "qwen_dtype": shared_runtime.qwen_dtype,
+                "embed_device": embed_device,
+                "top_k": shared_runtime.top_k,
+                "max_actions": shared_runtime.max_actions,
+                "planner_max_new_tokens": shared_runtime.planner_max_new_tokens,
+                "dispatcher_max_new_tokens": shared_runtime.dispatcher_max_new_tokens,
+                "embedding_batch_size": shared_runtime.embedding_batch_size,
+            },
+            "training": training_summary,
+            "counts": {
+                "total_scenarios": len(scenarios),
+                "successful_scenarios": 0,
+                "error_scenarios": len(scenarios),
+                "evaluable_scenarios": sum(
+                    1 for scenario in scenarios if scenario.get("expected_tools")
+                ),
+                "behavior_only_scenarios": sum(
+                    1 for scenario in scenarios if scenario.get("expected_behavior") is not None
+                ),
+                "no_tool_scenarios": sum(
+                    1
+                    for scenario in scenarios
+                    if "expected_tools" in scenario and not scenario.get("expected_tools")
+                ),
+                "single_tool_scenarios": sum(
+                    1 for scenario in scenarios if len(scenario.get("expected_tools", [])) == 1
+                ),
+                "multi_tool_scenarios": sum(
+                    1 for scenario in scenarios if len(scenario.get("expected_tools", [])) > 1
+                ),
+            },
+            "metrics": None,
+            "tool_names": [],
+            "scenarios": [],
+        }
+
+
+def build_leaderboard(variant_summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for variant in variant_summaries:
+        if variant.get("status") != "ok":
+            continue
+
+        overall = variant["metrics"]["overall"]
+        training = variant.get("training") or {}
+        entries.append(
+            {
+                "variant_id": variant["variant_id"],
+                "architecture": variant["architecture"],
+                "loss_name": variant["loss_name"],
+                "last_dispatch_hit_rate": overall["last_dispatch_hit_rate"],
+                "any_dispatch_hit_rate": overall["any_dispatch_hit_rate"],
+                "all_expected_present_rate": overall["all_expected_present_rate"],
+                "exact_unique_tool_set_match_rate": overall["exact_unique_tool_set_match_rate"],
+                "exact_unique_tool_sequence_match_rate": overall["exact_unique_tool_sequence_match_rate"],
+                "mean_expected_tool_recall": overall["mean_expected_tool_recall"],
+                "mean_expected_tool_precision": overall["mean_expected_tool_precision"],
+                "best_epoch": training.get("best_epoch"),
+                "best_val_retrieval_accuracy": training.get(
+                    "best_val_retrieval_accuracy",
+                    training.get("best_val_tool_retrieval_accuracy"),
+                ),
+            }
+        )
+
+    entries.sort(
+        key=lambda row: (
+            -safe_metric_sort_value(row["exact_unique_tool_sequence_match_rate"]),
+            -safe_metric_sort_value(row["all_expected_present_rate"]),
+            -safe_metric_sort_value(row["any_dispatch_hit_rate"]),
+            -safe_metric_sort_value(row["mean_expected_tool_recall"]),
+            row["variant_id"],
+        )
+    )
+
+    for index, row in enumerate(entries, start=1):
+        row["rank"] = index
+    return entries
+
+
+def build_cross_variant_metrics(leaderboard: list[dict[str, Any]]) -> dict[str, Any]:
+    if not leaderboard:
+        return {
+            "best_variant_by_exact_sequence_match": None,
+            "best_exact_unique_tool_sequence_match_rate": None,
+            "best_variant_by_all_expected_present": None,
+            "best_all_expected_present_rate": None,
+            "best_variant_by_last_dispatch_hit": None,
+            "best_last_dispatch_hit_rate": None,
+        }
+
+    best_by_exact_sequence = max(
+        leaderboard,
+        key=lambda row: (
+            safe_metric_sort_value(row["exact_unique_tool_sequence_match_rate"]),
+            safe_metric_sort_value(row["all_expected_present_rate"]),
+            safe_metric_sort_value(row["any_dispatch_hit_rate"]),
+        ),
+    )
+    best_by_all_present = max(
+        leaderboard,
+        key=lambda row: (
+            safe_metric_sort_value(row["all_expected_present_rate"]),
+            safe_metric_sort_value(row["exact_unique_tool_sequence_match_rate"]),
+            safe_metric_sort_value(row["mean_expected_tool_recall"]),
+        ),
+    )
+    best_by_last_hit = max(
+        leaderboard,
+        key=lambda row: (
+            safe_metric_sort_value(row["last_dispatch_hit_rate"]),
+            safe_metric_sort_value(row["any_dispatch_hit_rate"]),
+            safe_metric_sort_value(row["exact_unique_tool_sequence_match_rate"]),
+        ),
+    )
+
+    return {
+        "best_variant_by_exact_sequence_match": best_by_exact_sequence["variant_id"],
+        "best_exact_unique_tool_sequence_match_rate": best_by_exact_sequence[
+            "exact_unique_tool_sequence_match_rate"
+        ],
+        "best_variant_by_all_expected_present": best_by_all_present["variant_id"],
+        "best_all_expected_present_rate": best_by_all_present["all_expected_present_rate"],
+        "best_variant_by_last_dispatch_hit": best_by_last_hit["variant_id"],
+        "best_last_dispatch_hit_rate": best_by_last_hit["last_dispatch_hit_rate"],
+    }
+
+
 def evaluate_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     benchmark_payload = load_json(args.benchmark_path)
     scenarios = benchmark_payload.get("scenarios", [])
     if not isinstance(scenarios, list):
         raise ValueError(f"Expected {args.benchmark_path} to contain a 'scenarios' list.")
 
-    runtime = build_runtime(args)
-    scenario_reports = [run_scenario(runtime, scenario) for scenario in scenarios]
-    aggregate_metrics = build_aggregate_metrics(scenario_reports)
+    benchmark_tool_names = {
+        str(tool_name)
+        for scenario in scenarios
+        for tool_name in scenario.get("expected_tools", [])
+    }
 
-    success_count = sum(1 for row in scenario_reports if row["status"] == "ok")
-    error_count = len(scenario_reports) - success_count
-    evaluable_count = sum(1 for row in scenario_reports if row.get("expected_tools"))
-    behavior_only_count = sum(1 for row in scenario_reports if row.get("expected_behavior") is not None)
-    no_tool_count = sum(
-        1 for row in scenario_reports if "expected_tools" in row and not row.get("expected_tools")
-    )
+    shared_runtime = build_shared_runtime(args)
+
+    if args.checkpoint_path is not None:
+        if not args.checkpoint_path.is_file():
+            raise FileNotFoundError(f"Checkpoint not found: {args.checkpoint_path}")
+        variants = [variant_spec_from_checkpoint_path(args.checkpoint_path)]
+    else:
+        variants = discover_variants(args.checkpoint_root, args.checkpoint_filename)
+        if not variants:
+            raise FileNotFoundError(
+                f"No checkpoint variants matching */*/{args.checkpoint_filename} or "
+                f"{args.checkpoint_filename} found under {args.checkpoint_root}."
+            )
+
+    _, resolved_embed_device = resolve_runtime_devices(args.qwen_device, args.embed_device)
+    variant_summaries = [
+        evaluate_variant(
+            variant=variant,
+            shared_runtime=shared_runtime,
+            scenarios=scenarios,
+            benchmark_tool_names=benchmark_tool_names,
+            embed_device=resolved_embed_device,
+        )
+        for variant in variants
+    ]
+    leaderboard = build_leaderboard(variant_summaries)
 
     summary = {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "benchmark": "ToolCall15",
-        "mode": "agent_notebook_pipeline",
+        "mode": "embedding_space_variant_sweep",
         "description": (
-            "Runs the notebook-style ToolCall15 pipeline: Qwen planner -> embedding tool retrieval "
-            "per action -> Qwen dispatcher. Metrics score the final dispatch outputs against the benchmark."
+            "Evaluates every discovered ToolCall15 embedding-space variant with a shared "
+            "Qwen planner/dispatcher pipeline: Qwen planner -> embedding tool retrieval "
+            "per action -> Qwen dispatcher. Metrics score the final dispatch outputs "
+            "against the benchmark for each variant."
         ),
         "paths": {
-            "checkpoint_path": str(args.checkpoint_path.resolve()),
+            "checkpoint_path": (
+                str(args.checkpoint_path.resolve())
+                if args.checkpoint_path is not None
+                else None
+            ),
+            "checkpoint_root": str(args.checkpoint_root.resolve()),
             "benchmark_path": str(args.benchmark_path.resolve()),
             "tools_path": str(args.tools_path.resolve()),
             "output_path": str(args.output_path.resolve()),
         },
         "runtime": {
-            "qwen_model_name": runtime.qwen_model_name,
-            "qwen_device": runtime.qwen_device,
-            "qwen_dtype": runtime.qwen_dtype,
-            "embed_device": runtime.embed_device,
-            "top_k": runtime.top_k,
-            "max_actions": runtime.max_actions,
-            "planner_max_new_tokens": runtime.planner_max_new_tokens,
-            "dispatcher_max_new_tokens": runtime.dispatcher_max_new_tokens,
-            "embedding_batch_size": runtime.embedding_batch_size,
-            "tool_count": len(runtime.tool_names),
-            "embed_max_length": runtime.embed_max_length,
+            "qwen_model_name": shared_runtime.qwen_model_name,
+            "qwen_device": shared_runtime.qwen_device,
+            "qwen_dtype": shared_runtime.qwen_dtype,
+            "embed_device": resolved_embed_device,
+            "top_k": shared_runtime.top_k,
+            "max_actions": shared_runtime.max_actions,
+            "planner_max_new_tokens": shared_runtime.planner_max_new_tokens,
+            "dispatcher_max_new_tokens": shared_runtime.dispatcher_max_new_tokens,
+            "embedding_batch_size": shared_runtime.embedding_batch_size,
+            "checkpoint_filename": args.checkpoint_filename,
+            "variant_count": len(variants),
+            "benchmark_tool_count": len(benchmark_tool_names),
             "local_files_only": bool(args.local_files_only),
         },
         "counts": {
-            "total_scenarios": len(scenario_reports),
-            "successful_scenarios": success_count,
-            "error_scenarios": error_count,
-            "evaluable_scenarios": evaluable_count,
-            "behavior_only_scenarios": behavior_only_count,
-            "no_tool_scenarios": no_tool_count,
+            "total_variants": len(variant_summaries),
+            "successful_variants": sum(
+                1 for variant in variant_summaries if variant.get("status") == "ok"
+            ),
+            "error_variants": sum(
+                1 for variant in variant_summaries if variant.get("status") != "ok"
+            ),
+            "total_scenarios": len(scenarios),
+            "evaluable_scenarios": sum(
+                1 for scenario in scenarios if scenario.get("expected_tools")
+            ),
+            "behavior_only_scenarios": sum(
+                1 for scenario in scenarios if scenario.get("expected_behavior") is not None
+            ),
+            "no_tool_scenarios": sum(
+                1 for scenario in scenarios if "expected_tools" in scenario and not scenario.get("expected_tools")
+            ),
             "single_tool_scenarios": sum(
-                1 for row in scenario_reports if len(row.get("expected_tools", [])) == 1
+                1 for scenario in scenarios if len(scenario.get("expected_tools", [])) == 1
             ),
             "multi_tool_scenarios": sum(
-                1 for row in scenario_reports if len(row.get("expected_tools", [])) > 1
+                1 for scenario in scenarios if len(scenario.get("expected_tools", [])) > 1
             ),
         },
-        "metrics": aggregate_metrics,
-        "tool_names": runtime.tool_names,
-        "scenarios": scenario_reports,
+        "metrics": build_cross_variant_metrics(leaderboard),
+        "leaderboard": leaderboard,
+        "tool_names": shared_runtime.registry_tool_names,
+        "variants": variant_summaries,
     }
 
     args.output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -938,15 +1439,15 @@ def evaluate_benchmark(args: argparse.Namespace) -> dict[str, Any]:
 def main() -> None:
     args = parse_args()
     summary = evaluate_benchmark(args)
-    overall = summary["metrics"]["overall"]
+    best_variant = summary["metrics"]["best_variant_by_exact_sequence_match"]
+    best_sequence = summary["metrics"]["best_exact_unique_tool_sequence_match_rate"]
+    best_all_present = summary["metrics"]["best_all_expected_present_rate"]
     print(f"Wrote eval summary to {args.output_path}")
     print(
-        "Overall dispatch metrics: "
-        f"last_hit={overall['last_dispatch_hit_rate']}, "
-        f"any_hit={overall['any_dispatch_hit_rate']}, "
-        f"all_present={overall['all_expected_present_rate']}, "
-        f"exact_set={overall['exact_unique_tool_set_match_rate']}, "
-        f"exact_sequence={overall['exact_unique_tool_sequence_match_rate']}"
+        "Best variant: "
+        f"{best_variant}, "
+        f"exact_sequence={best_sequence}, "
+        f"all_present={best_all_present}"
     )
 
 

@@ -9,6 +9,6 @@ export default function Image() {
     eyebrow: "Models",
     title: "Download normal and hierarchical embedding variants.",
     description: "Compare losses, checkpoints, dataset versions, and release status from one public registry.",
-    chips: ["normal", "hierarchical", "prototype_ce", "contrastive", "circle"],
+    chips: ["normal", "hierarchical", "prototype_ce", "contrastive", "functional_margin"],
   });
 }

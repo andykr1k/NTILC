@@ -4,6 +4,8 @@ set -euo pipefail
 
 # Fill in this one line.
 DATASET_PATH="data/OSS/tool_embedding_dataset.jsonl"
+TRAIN_DATASET_PATH="${TRAIN_DATASET_PATH:-}"
+TEST_DATASET_PATH="${TEST_DATASET_PATH:-}"
 
 # Optional W&B defaults. Edit these if you want the script to run with W&B
 # without needing extra environment variables every time.
@@ -43,6 +45,7 @@ LOSSES=(
   "prototype_ce"
   "contrastive"
   "circle"
+  "functional_margin"
 )
 
 WANDB_ARGS=()
@@ -74,6 +77,16 @@ if [[ ! -f "${DATASET_PATH}" ]]; then
   exit 1
 fi
 
+if [[ -n "${TRAIN_DATASET_PATH}" && ! -f "${TRAIN_DATASET_PATH}" ]]; then
+  echo "Train split not found: ${TRAIN_DATASET_PATH}" >&2
+  exit 1
+fi
+
+if [[ -n "${TEST_DATASET_PATH}" && ! -f "${TEST_DATASET_PATH}" ]]; then
+  echo "Test split not found: ${TEST_DATASET_PATH}" >&2
+  exit 1
+fi
+
 if [[ ! -f "${HIERARCHY_PATH}" ]]; then
   echo "Hierarchy mapping not found: ${HIERARCHY_PATH}" >&2
   echo "Expected a JSON file that maps tool_name -> parent_name." >&2
@@ -82,17 +95,33 @@ fi
 
 echo "Root directory: ${ROOT_DIR}"
 echo "Dataset: ${DATASET_PATH}"
+if [[ -n "${TRAIN_DATASET_PATH}" ]]; then
+  echo "Train split: ${TRAIN_DATASET_PATH}"
+fi
+if [[ -n "${TEST_DATASET_PATH}" ]]; then
+  echo "Test split: ${TEST_DATASET_PATH}"
+fi
 echo "Hierarchy: ${HIERARCHY_PATH}"
 echo "Output base: ${OUTPUT_DIR}"
 if [[ "${WANDB_ENABLED}" == "1" ]]; then
   echo "W&B group: ${WANDB_GROUP_VALUE}"
 fi
 
+TRAINER_DATASET_ARGS=(
+  "--dataset-path" "${DATASET_PATH}"
+)
+if [[ -n "${TRAIN_DATASET_PATH}" ]]; then
+  TRAINER_DATASET_ARGS+=("--train-dataset-path" "${TRAIN_DATASET_PATH}")
+fi
+if [[ -n "${TEST_DATASET_PATH}" ]]; then
+  TRAINER_DATASET_ARGS+=("--test-dataset-path" "${TEST_DATASET_PATH}")
+fi
+
 for loss in "${LOSSES[@]}"; do
   echo
   echo "=== Training normal embedding space with loss=${loss} ==="
   "${PYTHON_BIN}" -m training.train_embedding_space \
-    --dataset-path "${DATASET_PATH}" \
+    "${TRAINER_DATASET_ARGS[@]}" \
     --output-dir "${OUTPUT_DIR}" \
     --loss-type "${loss}" \
     "${WANDB_ARGS[@]}" \
@@ -103,7 +132,7 @@ for loss in "${LOSSES[@]}"; do
   echo
   echo "=== Training hierarchical embedding space with loss=${loss} ==="
   "${PYTHON_BIN}" -m training.train_hierarchical_embedding_space \
-    --dataset-path "${DATASET_PATH}" \
+    "${TRAINER_DATASET_ARGS[@]}" \
     --hierarchy-path "${HIERARCHY_PATH}" \
     --output-dir "${OUTPUT_DIR}" \
     --loss-type "${loss}" \

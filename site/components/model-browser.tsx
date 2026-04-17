@@ -71,6 +71,7 @@ export function ModelBrowser({ releases }: ModelBrowserProps) {
               <option value="prototype_ce">prototype_ce</option>
               <option value="contrastive">contrastive</option>
               <option value="circle">circle</option>
+              <option value="functional_margin">functional_margin</option>
             </select>
           </label>
           <label className="space-y-2">
