@@ -22,7 +22,7 @@ SITE_REGISTRY_DIR = REPO_ROOT / "site" / "data" / "registry"
 
 ALLOWED_INTERFACE_TYPES = {"cli", "python", "javascript", "http", "other"}
 ALLOWED_ARCHITECTURES = {"normal", "hierarchical"}
-ALLOWED_LOSSES = {"prototype_ce", "contrastive", "circle"}
+ALLOWED_LOSSES = {"prototype_ce", "contrastive", "circle", "functional_margin"}
 ALLOWED_MODEL_STATUSES = {"planned", "ready", "published", "deprecated"}
 MODEL_STATUS_ORDER = {"published": 0, "ready": 1, "planned": 2, "deprecated": 3}
 

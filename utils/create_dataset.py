@@ -16,7 +16,7 @@ SYSTEM_PROMPT = """You create short, realistic user requests for tool-routing da
 Each string must be a natural user request.
 Do not mention tool names, JSON, schemas, or implementation details.
 Do not number the items."""
-DATA_DIR = Path("data/ToolVerifier")
+DATA_DIR = Path("data/OSS")
 DEFAULT_TOOLS_PATH = DATA_DIR / "tools.json"
 DEFAULT_OUTPUT_PATH = DATA_DIR / "tool_embedding_dataset.jsonl"
 DEFAULT_SUMMARY_PATH = DATA_DIR / "tool_embedding_dataset_summary.json"
@@ -51,7 +51,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--examples-per-tool",
         type=int,
-        default=12,
+        default=20,
         help="How many synthetic queries to create per tool.",
     )
     parser.add_argument(

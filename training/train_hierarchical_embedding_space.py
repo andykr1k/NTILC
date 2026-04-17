@@ -22,10 +22,16 @@ from training.train_embedding_space import (
     clean_rows,
     compute_tool_centroids,
     embed_texts,
+    functional_margin_penalty,
     infer_hidden_size,
+    load_checkpoint_bundle,
+    load_dataset_rows,
     load_jsonl,
     mean_pool,
     normalize_loss_type,
+    prepare_tool_compatibility_matrix,
+    resolve_tools_path,
+    resolve_split_dataset_paths,
     resolve_output_dir,
     retrieval_accuracy,
     stratified_split,
@@ -33,6 +39,7 @@ from training.train_embedding_space import (
 from training.wandb_diagnostics import (
     add_diagnostic_arguments,
     add_wandb_arguments,
+    build_wandb_split_charts,
     build_wandb_log_payload,
     compute_embedding_diagnostics,
     init_wandb_run,
@@ -52,7 +59,19 @@ def parse_args() -> argparse.Namespace:
         "--dataset-path",
         type=str,
         default=str(DEFAULT_DATASET_PATH),
-        help="Path to the synthetic tool dataset.",
+        help="Path to the combined tool dataset. Used directly unless --train-dataset-path is provided.",
+    )
+    parser.add_argument(
+        "--train-dataset-path",
+        type=str,
+        default="",
+        help="Optional explicit training dataset split (.json or .jsonl). Validation is still split from this training set.",
+    )
+    parser.add_argument(
+        "--test-dataset-path",
+        type=str,
+        default="",
+        help="Optional explicit held-out test dataset split (.json or .jsonl). Evaluated after training using the best checkpoint.",
     )
     parser.add_argument(
         "--hierarchy-path",
@@ -65,6 +84,12 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=str(DEFAULT_OUTPUT_DIR),
         help="Base directory where checkpoints and metrics are saved under architecture/loss subdirectories.",
+    )
+    parser.add_argument(
+        "--tools-path",
+        type=str,
+        default="",
+        help="Optional path to a tools.json catalog. When omitted, the trainer will try dataset_dir/tools.json.",
     )
     parser.add_argument(
         "--encoder-model",
@@ -137,7 +162,7 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="contrastive",
         choices=tuple(LOSS_TYPE_ALIASES),
-        help="Training loss to use: prototype_ce (deprecated alias: current), contrastive, or circle.",
+        help="Training loss to use: prototype_ce (deprecated alias: current), contrastive, circle, or functional_margin (alias: functional).",
     )
     parser.add_argument(
         "--contrastive-margin",
@@ -156,6 +181,18 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=32.0,
         help="Scale factor used by the circle loss.",
+    )
+    parser.add_argument(
+        "--compatibility-weight",
+        type=float,
+        default=1.0,
+        help="Lambda applied to the functional compatibility regularizer.",
+    )
+    parser.add_argument(
+        "--compatibility-margin",
+        type=float,
+        default=0.5,
+        help="Margin used by the functional compatibility regularizer on cosine distance.",
     )
     parser.add_argument(
         "--freeze-encoder",
@@ -378,6 +415,8 @@ def compute_similarity_sets(
         "parent_matched": parent_prototypes[parent_labels],
         "tool_positive": tool_positive,
         "tool_negative_sets": tool_negative_sets,
+        "tool_negative_mask": tool_negative_mask,
+        "tool_similarities": tool_similarities,
         "tool_matched": tool_prototypes[labels],
     }
 
@@ -464,6 +503,9 @@ def compute_loss(
     contrastive_margin: float,
     circle_margin: float,
     circle_gamma: float,
+    tool_compatibility_matrix: torch.Tensor | None,
+    compatibility_weight: float,
+    compatibility_margin: float,
 ) -> tuple[torch.Tensor, Dict[str, float]]:
     similarity_sets = compute_similarity_sets(
         model=model,
@@ -527,6 +569,34 @@ def compute_loss(
             "child_hardest_negative_similarity": child_metrics["hardest_negative_similarity"],
         }
 
+    if loss_type == "functional_margin":
+        if tool_compatibility_matrix is None:
+            raise ValueError("functional_margin loss requires a tool compatibility matrix.")
+
+        masked_child_logits = model.mask_tool_logits(tool_logits, parent_labels)
+        parent_cross_entropy = F.cross_entropy(parent_logits, parent_labels)
+        child_cross_entropy = F.cross_entropy(masked_child_logits, labels)
+        negative_weights = (
+            1.0 - tool_compatibility_matrix[labels]
+        ) * similarity_sets["tool_negative_mask"].to(embeddings.dtype)
+        functional_penalty, functional_metrics = functional_margin_penalty(
+            similarities=similarity_sets["tool_similarities"],
+            negative_weights=negative_weights,
+            margin=compatibility_margin,
+        )
+        loss = parent_cross_entropy + child_cross_entropy + compatibility_weight * functional_penalty
+        return loss, {
+            "parent_cross_entropy": float(parent_cross_entropy.detach().cpu()),
+            "child_cross_entropy": float(child_cross_entropy.detach().cpu()),
+            "functional_penalty": float(functional_penalty.detach().cpu()),
+            "mean_negative_incompatibility": float(
+                functional_metrics["mean_negative_incompatibility"].detach().cpu()
+            ),
+            "active_functional_margin": float(
+                functional_metrics["active_functional_margin"].detach().cpu()
+            ),
+        }
+
     raise ValueError(f"Unsupported loss type: {loss_type}")
 
 
@@ -584,6 +654,7 @@ def parent_retrieval_accuracy(
     device: torch.device | str,
     max_length: int,
     batch_size: int = 32,
+    progress_desc: str = "Embedding for parent retrieval",
 ) -> float:
     if not rows:
         return float("nan")
@@ -595,14 +666,16 @@ def parent_retrieval_accuracy(
         device=device,
         max_length=max_length,
         batch_size=batch_size,
-        progress_desc="Embedding for parent retrieval",
+        progress_desc=progress_desc,
     )
+    embeddings = embeddings.to(parent_centroids.device)
     scores = embeddings @ parent_centroids.T
     predictions = scores.argmax(dim=-1)
     parent_to_index = {parent: index for index, parent in enumerate(parent_names)}
     labels = torch.tensor(
         [parent_to_index[tool_to_parent[row["tool"]]] for row in rows],
         dtype=torch.long,
+        device=predictions.device,
     )
     return float((predictions == labels).float().mean().item())
 
@@ -612,6 +685,7 @@ def classification_accuracies(
     model: HierarchicalToolEmbeddingModel,
     loader: DataLoader,
     device: torch.device,
+    split_name: str = "Validation",
 ) -> tuple[float, float]:
     total = 0
     correct_parent = 0
@@ -619,7 +693,7 @@ def classification_accuracies(
     model.eval()
     for batch in tqdm(
         loader,
-        desc="Validation classification",
+        desc=f"{split_name} classification",
         unit="batch",
         leave=False,
     ):
@@ -679,25 +753,55 @@ def main() -> None:
     args.loss_type = normalize_loss_type(args.loss_type)
 
     dataset_path = Path(args.dataset_path)
+    train_dataset_path, test_dataset_path = resolve_split_dataset_paths(
+        dataset_path=dataset_path,
+        train_dataset_path=args.train_dataset_path,
+        test_dataset_path=args.test_dataset_path,
+    )
     hierarchy_path = Path(args.hierarchy_path)
     output_dir = resolve_output_dir(args.output_dir, architecture="hierarchical", loss_type=args.loss_type)
     args.output_dir = str(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    rows = clean_rows(load_jsonl(dataset_path))
-    if len(rows) < 2:
+    input_train_rows = clean_rows(load_dataset_rows(train_dataset_path))
+    test_rows = clean_rows(load_dataset_rows(test_dataset_path)) if test_dataset_path is not None else []
+    if len(input_train_rows) < 2:
         raise ValueError("Need at least two rows to train.")
 
-    tool_names = sorted({row["tool"] for row in rows})
+    tool_names = sorted({row["tool"] for row in input_train_rows})
+    unknown_test_tools = sorted({row["tool"] for row in test_rows} - set(tool_names))
+    if unknown_test_tools:
+        raise ValueError(
+            "Test dataset contains tools that are missing from the training dataset: "
+            + ", ".join(unknown_test_tools)
+        )
     tool_to_parent = validate_hierarchy_mapping(tool_names, load_hierarchy_mapping(hierarchy_path))
     parent_names = sorted({tool_to_parent[tool] for tool in tool_names})
     tool_to_index = {tool: index for index, tool in enumerate(tool_names)}
     parent_to_index = {parent: index for index, parent in enumerate(parent_names)}
 
-    if args.loss_type in {"contrastive", "circle"} and len(tool_names) < 2:
+    if args.loss_type in {"contrastive", "circle", "functional_margin"} and len(tool_names) < 2:
         raise ValueError(f"{args.loss_type} loss requires at least two distinct tools.")
 
-    train_rows, val_rows = stratified_split(rows, args.val_ratio, args.seed)
+    tool_compatibility_matrix = None
+    compatibility_info = {
+        "tools_path": "",
+        "metadata_source": "",
+        "schema_tool_count": 0,
+        "basic_metadata_tool_count": 0,
+    }
+    if args.loss_type == "functional_margin":
+        tool_compatibility_matrix, compatibility_info = prepare_tool_compatibility_matrix(
+            tool_names=tool_names,
+            rows=[*input_train_rows, *test_rows],
+            dataset_path=train_dataset_path,
+            tools_path=args.tools_path,
+        )
+        args.tools_path = compatibility_info["tools_path"]
+    elif args.tools_path:
+        args.tools_path = str(resolve_tools_path(train_dataset_path, args.tools_path) or "")
+
+    train_rows, val_rows = stratified_split(input_train_rows, args.val_ratio, args.seed)
     diagnostic_indices = select_diagnostic_indices(
         row_count=len(val_rows),
         max_samples=args.diagnostic_max_samples,
@@ -705,12 +809,24 @@ def main() -> None:
     )
     diagnostic_rows = [val_rows[index] for index in diagnostic_indices]
 
-    print(f"Loaded {len(rows)} rows from {dataset_path}")
+    print(f"Dataset path: {dataset_path}")
+    print(f"Training dataset: {train_dataset_path}")
+    if test_dataset_path is not None:
+        print(f"Test dataset: {test_dataset_path}")
     print(f"Tools: {len(tool_names)}")
     print(f"Parents: {len(parent_names)}")
+    print(f"Input train rows: {len(input_train_rows)}")
     print(f"Train rows: {len(train_rows)}")
     print(f"Validation rows: {len(val_rows)}")
+    print(f"Test rows: {len(test_rows)}")
     print(f"Loss: {args.loss_type}")
+    if tool_compatibility_matrix is not None:
+        print(
+            "Compatibility metadata: "
+            f"{compatibility_info['metadata_source']} "
+            f"(schemas={compatibility_info['schema_tool_count']}, "
+            f"basic={compatibility_info['basic_metadata_tool_count']})"
+        )
     print(f"Output dir: {output_dir}")
 
     device = choose_device(args.device)
@@ -725,13 +841,20 @@ def main() -> None:
         config={
             **vars(args),
             "dataset_path": str(dataset_path),
+            "train_dataset_path": str(train_dataset_path),
+            "test_dataset_path": str(test_dataset_path) if test_dataset_path is not None else "",
             "hierarchy_path": str(hierarchy_path),
             "output_dir": str(output_dir),
             "tool_count": len(tool_names),
             "parent_count": len(parent_names),
+            "input_train_row_count": len(input_train_rows),
             "train_row_count": len(train_rows),
             "val_row_count": len(val_rows),
+            "test_row_count": len(test_rows),
             "diagnostic_sample_size": len(diagnostic_rows),
+            "compatibility_metadata_source": compatibility_info["metadata_source"],
+            "compatibility_schema_tool_count": compatibility_info["schema_tool_count"],
+            "compatibility_basic_metadata_tool_count": compatibility_info["basic_metadata_tool_count"],
         },
     )
 
@@ -747,6 +870,16 @@ def main() -> None:
         shuffle=False,
         collate_fn=collate_fn,
     )
+    test_loader = (
+        DataLoader(
+            HierarchicalToolDataset(test_rows, tool_to_index, parent_to_index, tool_to_parent),
+            batch_size=args.batch_size,
+            shuffle=False,
+            collate_fn=collate_fn,
+        )
+        if test_rows
+        else None
+    )
 
     model = HierarchicalToolEmbeddingModel(
         encoder_model=args.encoder_model,
@@ -757,6 +890,8 @@ def main() -> None:
         dropout=args.dropout,
         freeze_encoder=args.freeze_encoder,
     ).to(device)
+    if tool_compatibility_matrix is not None:
+        tool_compatibility_matrix = tool_compatibility_matrix.to(device)
 
     optimizer = torch.optim.AdamW(
         filter(lambda parameter: parameter.requires_grad, model.parameters()),
@@ -813,6 +948,9 @@ def main() -> None:
                     contrastive_margin=args.contrastive_margin,
                     circle_margin=args.circle_margin,
                     circle_gamma=args.circle_gamma,
+                    tool_compatibility_matrix=tool_compatibility_matrix,
+                    compatibility_weight=args.compatibility_weight,
+                    compatibility_margin=args.compatibility_margin,
                 )
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -870,6 +1008,12 @@ def main() -> None:
                 max_length=args.max_length,
                 batch_size=args.batch_size,
             )
+            train_tool_classification, train_parent_classification = classification_accuracies(
+                model,
+                train_loader,
+                device,
+                split_name="Train",
+            )
 
             if args.wandb:
                 if val_rows:
@@ -913,6 +1057,7 @@ def main() -> None:
                     device=device,
                     max_length=args.max_length,
                     batch_size=args.batch_size,
+                    progress_desc="Embedding for validation tool retrieval",
                 )
                 val_parent_retrieval = parent_retrieval_accuracy(
                     model=model,
@@ -924,13 +1069,49 @@ def main() -> None:
                     device=device,
                     max_length=args.max_length,
                     batch_size=args.batch_size,
+                    progress_desc="Embedding for validation parent retrieval",
                 )
 
             val_tool_classification, val_parent_classification = classification_accuracies(
                 model,
                 val_loader,
                 device,
+                split_name="Validation",
             )
+            test_tool_retrieval = float("nan")
+            test_parent_retrieval = float("nan")
+            test_tool_classification = float("nan")
+            test_parent_classification = float("nan")
+            if test_rows and test_loader is not None:
+                test_tool_retrieval = retrieval_accuracy(
+                    model=model,
+                    tokenizer=tokenizer,
+                    rows=test_rows,
+                    centroids=train_tool_centroids,
+                    tool_names=tool_names,
+                    device=device,
+                    max_length=args.max_length,
+                    batch_size=args.batch_size,
+                    progress_desc="Embedding for test tool retrieval",
+                )
+                test_parent_retrieval = parent_retrieval_accuracy(
+                    model=model,
+                    tokenizer=tokenizer,
+                    rows=test_rows,
+                    parent_centroids=train_parent_centroids,
+                    parent_names=parent_names,
+                    tool_to_parent=tool_to_parent,
+                    device=device,
+                    max_length=args.max_length,
+                    batch_size=args.batch_size,
+                    progress_desc="Embedding for test parent retrieval",
+                )
+                test_tool_classification, test_parent_classification = classification_accuracies(
+                    model,
+                    test_loader,
+                    device,
+                    split_name="Test",
+                )
 
             diagnostic_bundles: list[Dict[str, Any]] = []
             if args.wandb:
@@ -983,6 +1164,8 @@ def main() -> None:
                 "train_loss": running_loss / max(1, running_batches),
                 "train_tool_retrieval_accuracy": train_tool_retrieval,
                 "train_parent_retrieval_accuracy": train_parent_retrieval,
+                "train_tool_classification_accuracy": train_tool_classification,
+                "train_parent_classification_accuracy": train_parent_classification,
                 "val_tool_retrieval_accuracy": val_tool_retrieval,
                 "val_parent_retrieval_accuracy": val_parent_retrieval,
                 "val_tool_classification_accuracy": val_tool_classification,
@@ -992,6 +1175,15 @@ def main() -> None:
                 "best_val_tool_retrieval_accuracy": best_val_retrieval,
                 "best_epoch": best_epoch,
             }
+            if test_rows and test_loader is not None:
+                epoch_metrics.update(
+                    {
+                        "test_tool_retrieval_accuracy": test_tool_retrieval,
+                        "test_parent_retrieval_accuracy": test_parent_retrieval,
+                        "test_tool_classification_accuracy": test_tool_classification,
+                        "test_parent_classification_accuracy": test_parent_classification,
+                    }
+                )
             epoch_metrics.update(averaged_loss_metrics)
             if tool_diagnostics is not None:
                 epoch_metrics.update(tool_diagnostics["scalars"])
@@ -1040,6 +1232,50 @@ def main() -> None:
                     scalars=epoch_metrics,
                     diagnostics=diagnostic_bundles,
                 )
+                wandb_payload.update(
+                    build_wandb_split_charts(
+                        wandb_module=wandb_module,
+                        history=history,
+                        chart_specs=[
+                            {
+                                "key": "charts/tool_retrieval_accuracy_by_split",
+                                "title": "Tool Retrieval Accuracy by Split",
+                                "series": [
+                                    ("train", "train_tool_retrieval_accuracy"),
+                                    ("val", "val_tool_retrieval_accuracy"),
+                                    ("test", "test_tool_retrieval_accuracy"),
+                                ],
+                            },
+                            {
+                                "key": "charts/parent_retrieval_accuracy_by_split",
+                                "title": "Parent Retrieval Accuracy by Split",
+                                "series": [
+                                    ("train", "train_parent_retrieval_accuracy"),
+                                    ("val", "val_parent_retrieval_accuracy"),
+                                    ("test", "test_parent_retrieval_accuracy"),
+                                ],
+                            },
+                            {
+                                "key": "charts/tool_classification_accuracy_by_split",
+                                "title": "Tool Classification Accuracy by Split",
+                                "series": [
+                                    ("train", "train_tool_classification_accuracy"),
+                                    ("val", "val_tool_classification_accuracy"),
+                                    ("test", "test_tool_classification_accuracy"),
+                                ],
+                            },
+                            {
+                                "key": "charts/parent_classification_accuracy_by_split",
+                                "title": "Parent Classification Accuracy by Split",
+                                "series": [
+                                    ("train", "train_parent_classification_accuracy"),
+                                    ("val", "val_parent_classification_accuracy"),
+                                    ("test", "test_parent_classification_accuracy"),
+                                ],
+                            },
+                        ],
+                    )
+                )
                 wandb_run.log(wandb_payload, step=epoch)
                 wandb_run.summary["best_val_tool_retrieval_accuracy"] = best_val_retrieval
                 wandb_run.summary["best_epoch"] = best_epoch
@@ -1050,10 +1286,60 @@ def main() -> None:
                     for key, value in parent_diagnostics["summary"].items():
                         wandb_run.summary[key] = value
 
+        test_metrics: Dict[str, Any] = {}
+        if test_rows and test_loader is not None:
+            best_bundle = load_checkpoint_bundle(output_dir / "best.pt", device=str(device))
+            best_tool_centroids = F.normalize(best_bundle["centroids"].to(device), dim=-1)
+            best_parent_centroids = F.normalize(best_bundle["parent_centroids"].to(device), dim=-1)
+            test_tool_retrieval = retrieval_accuracy(
+                model=best_bundle["model"],
+                tokenizer=best_bundle["tokenizer"],
+                rows=test_rows,
+                centroids=best_tool_centroids,
+                tool_names=tool_names,
+                device=device,
+                max_length=int(best_bundle["max_length"]),
+                batch_size=args.batch_size,
+                progress_desc="Embedding for test tool retrieval",
+            )
+            test_parent_retrieval = parent_retrieval_accuracy(
+                model=best_bundle["model"],
+                tokenizer=best_bundle["tokenizer"],
+                rows=test_rows,
+                parent_centroids=best_parent_centroids,
+                parent_names=parent_names,
+                tool_to_parent=tool_to_parent,
+                device=device,
+                max_length=int(best_bundle["max_length"]),
+                batch_size=args.batch_size,
+                progress_desc="Embedding for test parent retrieval",
+            )
+            test_tool_classification, test_parent_classification = classification_accuracies(
+                best_bundle["model"],
+                test_loader,
+                device,
+                split_name="Test",
+            )
+            test_metrics = {
+                "test_tool_retrieval_accuracy": test_tool_retrieval,
+                "test_parent_retrieval_accuracy": test_parent_retrieval,
+                "test_tool_classification_accuracy": test_tool_classification,
+                "test_parent_classification_accuracy": test_parent_classification,
+                "test_row_count": len(test_rows),
+                "test_evaluated_checkpoint": "best.pt",
+            }
+            with (output_dir / "test_metrics.json").open("w", encoding="utf-8") as handle:
+                json.dump(test_metrics, handle, indent=2)
+                handle.write("\n")
+            tqdm.write(json.dumps({"final_test_metrics": test_metrics}, indent=2))
+
         with (output_dir / "metrics.json").open("w", encoding="utf-8") as handle:
             json.dump(history, handle, indent=2)
 
         if wandb_run is not None and wandb_module is not None:
+            if test_metrics:
+                for key, value in test_metrics.items():
+                    wandb_run.summary[key] = value
             log_output_artifact(
                 wandb_module=wandb_module,
                 run=wandb_run,

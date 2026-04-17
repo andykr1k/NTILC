@@ -64,11 +64,12 @@ Two model families are trained in this repo:
 - **normal** tool embedding models
 - **hierarchical** tool embedding models that explicitly use parent categories
 
-Each family supports three losses:
+Each family supports four losses:
 
 - `prototype_ce`
 - `contrastive`
 - `circle`
+- `functional_margin`
 
 The runtime loads a trained checkpoint bundle with
 `training.load_checkpoint_bundle(...)`, embeds the incoming search request, and
@@ -191,9 +192,11 @@ That wrapper trains:
 - `normal/prototype_ce`
 - `normal/contrastive`
 - `normal/circle`
+- `normal/functional_margin`
 - `hierarchical/prototype_ce`
 - `hierarchical/contrastive`
 - `hierarchical/circle`
+- `hierarchical/functional_margin`
 
 ### 3. Or run the trainers directly
 

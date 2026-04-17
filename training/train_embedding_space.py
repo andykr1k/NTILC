@@ -13,9 +13,15 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 from transformers import AutoModel, AutoTokenizer, get_linear_schedule_with_warmup
+from training.dataset_utils import (
+    clean_rows as clean_dataset_rows,
+    load_dataset_rows as load_dataset_records,
+    load_jsonl_rows as load_jsonl_records,
+)
 from training.wandb_diagnostics import (
     add_diagnostic_arguments,
     add_wandb_arguments,
+    build_wandb_split_charts,
     build_wandb_log_payload,
     compute_embedding_diagnostics,
     init_wandb_run,
@@ -29,8 +35,10 @@ LOSS_TYPE_ALIASES = {
     "prototype_ce": "prototype_ce",
     "contrastive": "contrastive",
     "circle": "circle",
+    "functional": "functional_margin",
+    "functional_margin": "functional_margin",
 }
-CANONICAL_LOSS_TYPES = ("prototype_ce", "contrastive", "circle")
+CANONICAL_LOSS_TYPES = ("prototype_ce", "contrastive", "circle", "functional_margin")
 DATA_DIR = Path("data/new")
 DEFAULT_DATASET_PATH = DATA_DIR / "tool_embedding_dataset.jsonl"
 DEFAULT_OUTPUT_DIR = DATA_DIR / "embeddings"
@@ -42,13 +50,31 @@ def parse_args() -> argparse.Namespace:
         "--dataset-path",
         type=str,
         default=str(DEFAULT_DATASET_PATH),
-        help="Path to the synthetic tool dataset.",
+        help="Path to the combined tool dataset. Used directly unless --train-dataset-path is provided.",
+    )
+    parser.add_argument(
+        "--train-dataset-path",
+        type=str,
+        default="",
+        help="Optional explicit training dataset split (.json or .jsonl). Validation is still split from this training set.",
+    )
+    parser.add_argument(
+        "--test-dataset-path",
+        type=str,
+        default="",
+        help="Optional explicit held-out test dataset split (.json or .jsonl). Evaluated after training using the best checkpoint.",
     )
     parser.add_argument(
         "--output-dir",
         type=str,
         default=str(DEFAULT_OUTPUT_DIR),
         help="Base directory where checkpoints and metrics are saved under architecture/loss subdirectories.",
+    )
+    parser.add_argument(
+        "--tools-path",
+        type=str,
+        default="",
+        help="Optional path to a tools.json catalog. When omitted, the trainer will try dataset_dir/tools.json.",
     )
     parser.add_argument(
         "--encoder-model",
@@ -121,7 +147,7 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="contrastive",
         choices=tuple(LOSS_TYPE_ALIASES),
-        help="Training loss to use: prototype_ce (deprecated alias: current), contrastive, or circle.",
+        help="Training loss to use: prototype_ce (deprecated alias: current), contrastive, circle, or functional_margin (alias: functional).",
     )
     parser.add_argument(
         "--contrastive-margin",
@@ -140,6 +166,18 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=32.0,
         help="Scale factor used by the circle loss.",
+    )
+    parser.add_argument(
+        "--compatibility-weight",
+        type=float,
+        default=1.0,
+        help="Lambda applied to the functional compatibility regularizer.",
+    )
+    parser.add_argument(
+        "--compatibility-margin",
+        type=float,
+        default=0.5,
+        help="Margin used by the functional compatibility regularizer on cosine distance.",
     )
     parser.add_argument(
         "--freeze-encoder",
@@ -180,23 +218,248 @@ def resolve_output_dir(
 
 
 def load_jsonl(path: Path) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
+    return load_jsonl_records(path)
+
+
+def load_dataset_rows(path: Path) -> List[Dict[str, Any]]:
+    return load_dataset_records(path)
+
+
+def clean_rows(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return clean_dataset_rows(rows)
+
+
+def resolve_tools_path(dataset_path: Path, tools_path: str) -> Path | None:
+    requested = str(tools_path).strip()
+    if requested:
+        candidate = Path(requested)
+        if not candidate.exists():
+            raise ValueError(f"Tool catalog not found: {candidate}")
+        return candidate
+
+    candidate = dataset_path.with_name("tools.json")
+    return candidate if candidate.exists() else None
+
+
+def resolve_split_dataset_paths(
+    dataset_path: Path,
+    train_dataset_path: str,
+    test_dataset_path: str,
+) -> tuple[Path, Path | None]:
+    resolved_train_dataset = (
+        Path(train_dataset_path).expanduser()
+        if str(train_dataset_path).strip()
+        else dataset_path
+    )
+    resolved_test_dataset = (
+        Path(test_dataset_path).expanduser()
+        if str(test_dataset_path).strip()
+        else None
+    )
+    return resolved_train_dataset, resolved_test_dataset
+
+
+def load_tool_catalog(path: Path) -> Dict[str, Dict[str, Any]]:
     with path.open("r", encoding="utf-8") as handle:
-        for line in tqdm(handle, desc="Loading dataset", unit="line"):
-            line = line.strip()
-            if line:
-                rows.append(json.loads(line))
-    return rows
+        payload = json.load(handle)
+
+    raw_tools = payload.get("tools", payload) if isinstance(payload, dict) else payload
+    if not isinstance(raw_tools, list):
+        raise ValueError(f"Expected a list of tools in {path}")
+
+    catalog: Dict[str, Dict[str, Any]] = {}
+    for raw_tool in raw_tools:
+        if not isinstance(raw_tool, dict):
+            continue
+        tool_id = str(raw_tool.get("id", raw_tool.get("name", ""))).strip()
+        if tool_id:
+            catalog[tool_id] = raw_tool
+    return catalog
 
 
-def clean_rows(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, str]]:
-    cleaned: List[Dict[str, str]] = []
-    for row in tqdm(rows, desc="Cleaning rows", unit="row"):
+def normalize_schema_key(value: Any) -> str:
+    return str(value).strip().lower()
+
+
+def set_f1_score(left: set[str], right: set[str]) -> float:
+    if not left and not right:
+        return 1.0
+    if not left or not right:
+        return 0.0
+    overlap = len(left & right)
+    return (2.0 * overlap) / (len(left) + len(right))
+
+
+def count_similarity(left: int, right: int) -> float:
+    if left == 0 and right == 0:
+        return 1.0
+    return 1.0 - (abs(left - right) / max(left, right, 1))
+
+
+def build_tool_metadata(
+    tool_names: Sequence[str],
+    rows: Sequence[Dict[str, Any]],
+    tools_path: Path | None,
+) -> Dict[str, Dict[str, Any]]:
+    metadata = {
+        tool: {
+            "interface_type": "",
+            "parent_id": "",
+            "required": set(),
+            "properties": {},
+            "has_schema": False,
+        }
+        for tool in tool_names
+    }
+
+    for row in rows:
         tool = str(row.get("tool", "")).strip()
-        query = str(row.get("query", row.get("text", ""))).strip()
-        if tool and query:
-            cleaned.append({"tool": tool, "query": query})
-    return cleaned
+        if tool not in metadata:
+            continue
+        record = metadata[tool]
+        interface_type = str(row.get("interface_type", "")).strip()
+        if interface_type and not record["interface_type"]:
+            record["interface_type"] = interface_type
+        parent_id = str(row.get("parent_id", row.get("parent_category", ""))).strip()
+        if parent_id and not record["parent_id"]:
+            record["parent_id"] = parent_id
+
+    if tools_path is None:
+        return metadata
+
+    for tool, raw_tool in load_tool_catalog(tools_path).items():
+        if tool not in metadata:
+            continue
+
+        record = metadata[tool]
+        interface_type = str(raw_tool.get("interface_type", "")).strip()
+        if interface_type:
+            record["interface_type"] = interface_type
+        parent_id = str(raw_tool.get("parent_id", raw_tool.get("parent_category", ""))).strip()
+        if parent_id:
+            record["parent_id"] = parent_id
+
+        parameters = raw_tool.get("parameters", {})
+        properties = parameters.get("properties", {}) if isinstance(parameters, dict) else {}
+        required = parameters.get("required", []) if isinstance(parameters, dict) else []
+
+        normalized_properties: Dict[str, Dict[str, Any]] = {}
+        if isinstance(properties, dict):
+            for name, spec in properties.items():
+                if not isinstance(spec, dict):
+                    continue
+                normalized_name = normalize_schema_key(name)
+                normalized_properties[normalized_name] = {
+                    "type": normalize_schema_key(spec.get("type", "any")) or "any",
+                    "enum": {
+                        normalize_schema_key(value)
+                        for value in spec.get("enum", [])
+                        if str(value).strip()
+                    },
+                }
+
+        record["required"] = {
+            normalize_schema_key(name)
+            for name in required
+            if str(name).strip()
+        }
+        record["properties"] = normalized_properties
+        record["has_schema"] = True
+
+    return metadata
+
+
+def tool_compatibility_score(left: Dict[str, Any], right: Dict[str, Any]) -> float:
+    interface_match = float(
+        bool(left["interface_type"])
+        and bool(right["interface_type"])
+        and left["interface_type"] == right["interface_type"]
+    )
+    parent_match = float(
+        bool(left["parent_id"])
+        and bool(right["parent_id"])
+        and left["parent_id"] == right["parent_id"]
+    )
+
+    if not (left["has_schema"] and right["has_schema"]):
+        return 0.65 * interface_match + 0.35 * parent_match
+
+    left_required = set(left["required"])
+    right_required = set(right["required"])
+    left_properties = dict(left["properties"])
+    right_properties = dict(right["properties"])
+    left_property_names = set(left_properties)
+    right_property_names = set(right_properties)
+    shared_properties = sorted(left_property_names & right_property_names)
+
+    if shared_properties:
+        property_type_score = sum(
+            float(left_properties[name].get("type") == right_properties[name].get("type"))
+            for name in shared_properties
+        ) / len(shared_properties)
+        enum_scores: List[float] = []
+        for name in shared_properties:
+            left_enum = set(left_properties[name].get("enum", set()))
+            right_enum = set(right_properties[name].get("enum", set()))
+            if not left_enum and not right_enum:
+                continue
+            if not left_enum or not right_enum:
+                enum_scores.append(0.0)
+                continue
+            enum_scores.append(len(left_enum & right_enum) / len(left_enum | right_enum))
+        enum_score = sum(enum_scores) / len(enum_scores) if enum_scores else 0.0
+    else:
+        property_type_score = 1.0 if not left_property_names and not right_property_names else 0.0
+        enum_score = 0.0
+
+    return (
+        0.30 * interface_match
+        + 0.10 * parent_match
+        + 0.20 * set_f1_score(left_required, right_required)
+        + 0.15 * set_f1_score(left_property_names, right_property_names)
+        + 0.10 * property_type_score
+        + 0.05 * count_similarity(len(left_required), len(right_required))
+        + 0.05 * count_similarity(len(left_property_names), len(right_property_names))
+        + 0.05 * enum_score
+    )
+
+
+def prepare_tool_compatibility_matrix(
+    tool_names: Sequence[str],
+    rows: Sequence[Dict[str, Any]],
+    dataset_path: Path,
+    tools_path: str,
+) -> tuple[torch.Tensor, Dict[str, Any]]:
+    resolved_tools_path = resolve_tools_path(dataset_path, tools_path)
+    metadata = build_tool_metadata(tool_names=tool_names, rows=rows, tools_path=resolved_tools_path)
+    matrix = torch.zeros((len(tool_names), len(tool_names)), dtype=torch.float32)
+
+    for row_index, left_tool in enumerate(tool_names):
+        matrix[row_index, row_index] = 1.0
+        for col_index in range(row_index + 1, len(tool_names)):
+            right_tool = tool_names[col_index]
+            score = tool_compatibility_score(metadata[left_tool], metadata[right_tool])
+            matrix[row_index, col_index] = score
+            matrix[col_index, row_index] = score
+
+    tools_with_schema = sum(1 for item in metadata.values() if item["has_schema"])
+    tools_with_basic_metadata = sum(
+        1
+        for item in metadata.values()
+        if item["interface_type"] or item["parent_id"]
+    )
+    if tools_with_schema == 0 and tools_with_basic_metadata == 0:
+        raise ValueError(
+            "functional_margin loss requires tool metadata. Provide --tools-path or use a dataset that includes interface_type/parent_id columns."
+        )
+
+    info = {
+        "tools_path": str(resolved_tools_path) if resolved_tools_path is not None else "",
+        "metadata_source": "tools.json" if resolved_tools_path is not None else "dataset rows",
+        "schema_tool_count": tools_with_schema,
+        "basic_metadata_tool_count": tools_with_basic_metadata,
+    }
+    return matrix, info
 
 
 def stratified_split(
@@ -350,15 +613,57 @@ def prototype_similarities(
     model: SimpleToolEmbeddingModel,
     embeddings: torch.Tensor,
     labels: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     prototypes = F.normalize(model.tool_prototypes, dim=-1)
     similarities = embeddings @ prototypes.T
     positive_similarities = similarities.gather(1, labels.unsqueeze(1)).squeeze(1)
 
     negative_mask = torch.ones_like(similarities, dtype=torch.bool)
     negative_mask.scatter_(1, labels.unsqueeze(1), False)
-    negative_similarities = similarities[negative_mask].view(similarities.size(0), -1)
-    return prototypes, positive_similarities, negative_similarities
+    return prototypes, similarities, positive_similarities, negative_mask
+
+
+def functional_margin_penalty(
+    similarities: torch.Tensor,
+    negative_weights: torch.Tensor,
+    margin: float,
+) -> tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+    if similarities.shape != negative_weights.shape:
+        raise ValueError("similarities and negative_weights must have the same shape.")
+
+    negative_weights = negative_weights.to(similarities.dtype)
+    negative_distances = 1.0 - similarities
+    negative_margin = F.relu(margin - negative_distances)
+    active_mask = (negative_margin > 0).to(similarities.dtype)
+    active_weights = negative_weights * active_mask
+
+    weight_sums = negative_weights.sum(dim=1)
+    active_weight_sums = active_weights.sum(dim=1)
+    has_active_weight = active_weight_sums > 0
+    safe_active_weight_sums = active_weight_sums.clamp(min=torch.finfo(similarities.dtype).eps)
+
+    penalty_per_sample = (active_weights * negative_margin.pow(2)).sum(dim=1) / safe_active_weight_sums
+    active_margin_per_sample = (active_weights * negative_margin).sum(dim=1) / safe_active_weight_sums
+    negative_counts = (negative_weights > 0).sum(dim=1).to(similarities.dtype)
+    safe_negative_counts = negative_counts.clamp(min=1.0)
+    mean_incompatibility_per_sample = negative_weights.sum(dim=1) / safe_negative_counts
+
+    zero = similarities.new_zeros(())
+    penalty = penalty_per_sample[has_active_weight].mean() if has_active_weight.any() else zero
+    active_margin = (
+        active_margin_per_sample[has_active_weight].mean()
+        if has_active_weight.any()
+        else zero
+    )
+    mean_incompatibility = (
+        mean_incompatibility_per_sample[negative_counts > 0].mean()
+        if (negative_counts > 0).any()
+        else zero
+    )
+    return penalty, {
+        "mean_negative_incompatibility": mean_incompatibility,
+        "active_functional_margin": active_margin,
+    }
 
 
 def compute_loss(
@@ -371,12 +676,16 @@ def compute_loss(
     contrastive_margin: float,
     circle_margin: float,
     circle_gamma: float,
+    compatibility_matrix: torch.Tensor | None,
+    compatibility_weight: float,
+    compatibility_margin: float,
 ) -> tuple[torch.Tensor, Dict[str, float]]:
-    prototypes, positive_similarities, negative_similarities = prototype_similarities(
+    prototypes, similarities, positive_similarities, negative_mask = prototype_similarities(
         model=model,
         embeddings=embeddings,
         labels=labels,
     )
+    negative_similarities = similarities[negative_mask].view(similarities.size(0), -1)
 
     if loss_type == "prototype_ce":
         cross_entropy = F.cross_entropy(logits, labels)
@@ -430,6 +739,29 @@ def compute_loss(
         return loss, {
             "positive_similarity": float(positive_similarities.mean().detach().cpu()),
             "hardest_negative_similarity": float(hardest_negative.detach().cpu()),
+        }
+
+    if loss_type == "functional_margin":
+        if compatibility_matrix is None:
+            raise ValueError("functional_margin loss requires a compatibility matrix.")
+
+        semantic_cross_entropy = F.cross_entropy(logits, labels)
+        negative_weights = (1.0 - compatibility_matrix[labels]) * negative_mask.to(embeddings.dtype)
+        functional_penalty, functional_metrics = functional_margin_penalty(
+            similarities=similarities,
+            negative_weights=negative_weights,
+            margin=compatibility_margin,
+        )
+        loss = semantic_cross_entropy + compatibility_weight * functional_penalty
+        return loss, {
+            "semantic_cross_entropy": float(semantic_cross_entropy.detach().cpu()),
+            "functional_penalty": float(functional_penalty.detach().cpu()),
+            "mean_negative_incompatibility": float(
+                functional_metrics["mean_negative_incompatibility"].detach().cpu()
+            ),
+            "active_functional_margin": float(
+                functional_metrics["active_functional_margin"].detach().cpu()
+            ),
         }
 
     raise ValueError(f"Unsupported loss type: {loss_type}")
@@ -523,6 +855,7 @@ def retrieval_accuracy(
     device: torch.device | str,
     max_length: int,
     batch_size: int = 32,
+    progress_desc: str = "Embedding for retrieval",
 ) -> float:
     if not rows:
         return float("nan")
@@ -534,12 +867,17 @@ def retrieval_accuracy(
         device=device,
         max_length=max_length,
         batch_size=batch_size,
-        progress_desc="Embedding for retrieval",
+        progress_desc=progress_desc,
     )
+    embeddings = embeddings.to(centroids.device)
     scores = embeddings @ centroids.T
     predictions = scores.argmax(dim=-1)
     tool_to_index = {tool: index for index, tool in enumerate(tool_names)}
-    labels = torch.tensor([tool_to_index[row["tool"]] for row in rows], dtype=torch.long)
+    labels = torch.tensor(
+        [tool_to_index[row["tool"]] for row in rows],
+        dtype=torch.long,
+        device=predictions.device,
+    )
     return float((predictions == labels).float().mean().item())
 
 
@@ -548,13 +886,14 @@ def classification_accuracy(
     model: SimpleToolEmbeddingModel,
     loader: DataLoader,
     device: torch.device,
+    split_name: str = "Validation",
 ) -> float:
     total = 0
     correct = 0
     model.eval()
     for batch in tqdm(
         loader,
-        desc="Validation classification",
+        desc=f"{split_name} classification",
         unit="batch",
         leave=False,
     ):
@@ -664,19 +1003,50 @@ def main() -> None:
     args.loss_type = normalize_loss_type(args.loss_type)
 
     dataset_path = Path(args.dataset_path)
+    train_dataset_path, test_dataset_path = resolve_split_dataset_paths(
+        dataset_path=dataset_path,
+        train_dataset_path=args.train_dataset_path,
+        test_dataset_path=args.test_dataset_path,
+    )
     output_dir = resolve_output_dir(args.output_dir, architecture="normal", loss_type=args.loss_type)
     args.output_dir = str(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    rows = clean_rows(load_jsonl(dataset_path))
-    if len(rows) < 2:
+    input_train_rows = clean_rows(load_dataset_rows(train_dataset_path))
+    test_rows = clean_rows(load_dataset_rows(test_dataset_path)) if test_dataset_path is not None else []
+    if len(input_train_rows) < 2:
         raise ValueError("Need at least two rows to train.")
 
-    tool_names = sorted({row["tool"] for row in rows})
+    tool_names = sorted({row["tool"] for row in input_train_rows})
+    unknown_test_tools = sorted({row["tool"] for row in test_rows} - set(tool_names))
+    if unknown_test_tools:
+        raise ValueError(
+            "Test dataset contains tools that are missing from the training dataset: "
+            + ", ".join(unknown_test_tools)
+        )
     tool_to_index = {tool: index for index, tool in enumerate(tool_names)}
-    if args.loss_type in {"contrastive", "circle"} and len(tool_names) < 2:
+    if args.loss_type in {"contrastive", "circle", "functional_margin"} and len(tool_names) < 2:
         raise ValueError(f"{args.loss_type} loss requires at least two distinct tools.")
-    train_rows, val_rows = stratified_split(rows, args.val_ratio, args.seed)
+
+    compatibility_matrix = None
+    compatibility_info = {
+        "tools_path": "",
+        "metadata_source": "",
+        "schema_tool_count": 0,
+        "basic_metadata_tool_count": 0,
+    }
+    if args.loss_type == "functional_margin":
+        compatibility_matrix, compatibility_info = prepare_tool_compatibility_matrix(
+            tool_names=tool_names,
+            rows=[*input_train_rows, *test_rows],
+            dataset_path=train_dataset_path,
+            tools_path=args.tools_path,
+        )
+        args.tools_path = compatibility_info["tools_path"]
+    elif args.tools_path:
+        args.tools_path = str(resolve_tools_path(train_dataset_path, args.tools_path) or "")
+
+    train_rows, val_rows = stratified_split(input_train_rows, args.val_ratio, args.seed)
     diagnostic_indices = select_diagnostic_indices(
         row_count=len(val_rows),
         max_samples=args.diagnostic_max_samples,
@@ -684,11 +1054,23 @@ def main() -> None:
     )
     diagnostic_rows = [val_rows[index] for index in diagnostic_indices]
 
-    print(f"Loaded {len(rows)} rows from {dataset_path}")
+    print(f"Dataset path: {dataset_path}")
+    print(f"Training dataset: {train_dataset_path}")
+    if test_dataset_path is not None:
+        print(f"Test dataset: {test_dataset_path}")
     print(f"Tools: {len(tool_names)}")
+    print(f"Input train rows: {len(input_train_rows)}")
     print(f"Train rows: {len(train_rows)}")
     print(f"Validation rows: {len(val_rows)}")
+    print(f"Test rows: {len(test_rows)}")
     print(f"Loss: {args.loss_type}")
+    if compatibility_matrix is not None:
+        print(
+            "Compatibility metadata: "
+            f"{compatibility_info['metadata_source']} "
+            f"(schemas={compatibility_info['schema_tool_count']}, "
+            f"basic={compatibility_info['basic_metadata_tool_count']})"
+        )
     print(f"Output dir: {output_dir}")
 
     device = choose_device(args.device)
@@ -703,11 +1085,18 @@ def main() -> None:
         config={
             **vars(args),
             "dataset_path": str(dataset_path),
+            "train_dataset_path": str(train_dataset_path),
+            "test_dataset_path": str(test_dataset_path) if test_dataset_path is not None else "",
             "output_dir": str(output_dir),
             "tool_count": len(tool_names),
+            "input_train_row_count": len(input_train_rows),
             "train_row_count": len(train_rows),
             "val_row_count": len(val_rows),
+            "test_row_count": len(test_rows),
             "diagnostic_sample_size": len(diagnostic_rows),
+            "compatibility_metadata_source": compatibility_info["metadata_source"],
+            "compatibility_schema_tool_count": compatibility_info["schema_tool_count"],
+            "compatibility_basic_metadata_tool_count": compatibility_info["basic_metadata_tool_count"],
         },
     )
 
@@ -723,6 +1112,16 @@ def main() -> None:
         shuffle=False,
         collate_fn=collate_fn,
     )
+    test_loader = (
+        DataLoader(
+            ToolDataset(test_rows, tool_to_index),
+            batch_size=args.batch_size,
+            shuffle=False,
+            collate_fn=collate_fn,
+        )
+        if test_rows
+        else None
+    )
 
     model = SimpleToolEmbeddingModel(
         encoder_model=args.encoder_model,
@@ -731,6 +1130,8 @@ def main() -> None:
         dropout=args.dropout,
         freeze_encoder=args.freeze_encoder,
     ).to(device)
+    if compatibility_matrix is not None:
+        compatibility_matrix = compatibility_matrix.to(device)
 
     optimizer = torch.optim.AdamW(
         filter(lambda parameter: parameter.requires_grad, model.parameters()),
@@ -784,6 +1185,9 @@ def main() -> None:
                     contrastive_margin=args.contrastive_margin,
                     circle_margin=args.circle_margin,
                     circle_gamma=args.circle_gamma,
+                    compatibility_matrix=compatibility_matrix,
+                    compatibility_weight=args.compatibility_weight,
+                    compatibility_margin=args.compatibility_margin,
                 )
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -820,6 +1224,12 @@ def main() -> None:
                 max_length=args.max_length,
                 batch_size=args.batch_size,
             )
+            train_classification = classification_accuracy(
+                model,
+                train_loader,
+                device,
+                split_name="Train",
+            )
 
             if args.wandb:
                 if val_rows:
@@ -854,9 +1264,30 @@ def main() -> None:
                     device=device,
                     max_length=args.max_length,
                     batch_size=args.batch_size,
+                    progress_desc="Embedding for validation retrieval",
                 )
 
-            val_classification = classification_accuracy(model, val_loader, device)
+            val_classification = classification_accuracy(model, val_loader, device, split_name="Validation")
+            test_retrieval = float("nan")
+            test_classification = float("nan")
+            if test_rows and test_loader is not None:
+                test_retrieval = retrieval_accuracy(
+                    model=model,
+                    tokenizer=tokenizer,
+                    rows=test_rows,
+                    centroids=train_centroids,
+                    tool_names=tool_names,
+                    device=device,
+                    max_length=args.max_length,
+                    batch_size=args.batch_size,
+                    progress_desc="Embedding for test retrieval",
+                )
+                test_classification = classification_accuracy(
+                    model,
+                    test_loader,
+                    device,
+                    split_name="Test",
+                )
 
             diagnostic_bundles: list[Dict[str, Any]] = []
             if args.wandb:
@@ -893,6 +1324,7 @@ def main() -> None:
                 "epoch": epoch,
                 "train_loss": running_loss / max(1, running_batches),
                 "train_retrieval_accuracy": train_retrieval,
+                "train_classification_accuracy": train_classification,
                 "val_retrieval_accuracy": val_retrieval,
                 "val_classification_accuracy": val_classification,
                 "learning_rate": float(scheduler.get_last_lr()[0]),
@@ -900,6 +1332,13 @@ def main() -> None:
                 "best_val_retrieval_accuracy": best_val_retrieval,
                 "best_epoch": best_epoch,
             }
+            if test_rows and test_loader is not None:
+                epoch_metrics.update(
+                    {
+                        "test_retrieval_accuracy": test_retrieval,
+                        "test_classification_accuracy": test_classification,
+                    }
+                )
             epoch_metrics.update(averaged_loss_metrics)
             if tool_diagnostics is not None:
                 epoch_metrics.update(tool_diagnostics["scalars"])
@@ -940,6 +1379,32 @@ def main() -> None:
                     scalars=epoch_metrics,
                     diagnostics=diagnostic_bundles,
                 )
+                wandb_payload.update(
+                    build_wandb_split_charts(
+                        wandb_module=wandb_module,
+                        history=history,
+                        chart_specs=[
+                            {
+                                "key": "charts/retrieval_accuracy_by_split",
+                                "title": "Retrieval Accuracy by Split",
+                                "series": [
+                                    ("train", "train_retrieval_accuracy"),
+                                    ("val", "val_retrieval_accuracy"),
+                                    ("test", "test_retrieval_accuracy"),
+                                ],
+                            },
+                            {
+                                "key": "charts/classification_accuracy_by_split",
+                                "title": "Classification Accuracy by Split",
+                                "series": [
+                                    ("train", "train_classification_accuracy"),
+                                    ("val", "val_classification_accuracy"),
+                                    ("test", "test_classification_accuracy"),
+                                ],
+                            },
+                        ],
+                    )
+                )
                 wandb_run.log(wandb_payload, step=epoch)
                 wandb_run.summary["best_val_retrieval_accuracy"] = best_val_retrieval
                 wandb_run.summary["best_epoch"] = best_epoch
@@ -947,10 +1412,43 @@ def main() -> None:
                     for key, value in tool_diagnostics["summary"].items():
                         wandb_run.summary[key] = value
 
+        test_metrics: Dict[str, Any] = {}
+        if test_rows and test_loader is not None:
+            best_bundle = load_checkpoint_bundle(output_dir / "best.pt", device=str(device))
+            best_centroids = F.normalize(best_bundle["centroids"].to(device), dim=-1)
+            test_metrics = {
+                "test_retrieval_accuracy": retrieval_accuracy(
+                    model=best_bundle["model"],
+                    tokenizer=best_bundle["tokenizer"],
+                    rows=test_rows,
+                    centroids=best_centroids,
+                    tool_names=tool_names,
+                    device=device,
+                    max_length=int(best_bundle["max_length"]),
+                    batch_size=args.batch_size,
+                    progress_desc="Embedding for test retrieval",
+                ),
+                "test_classification_accuracy": classification_accuracy(
+                    best_bundle["model"],
+                    test_loader,
+                    device,
+                    split_name="Test",
+                ),
+                "test_row_count": len(test_rows),
+                "test_evaluated_checkpoint": "best.pt",
+            }
+            with (output_dir / "test_metrics.json").open("w", encoding="utf-8") as handle:
+                json.dump(test_metrics, handle, indent=2)
+                handle.write("\n")
+            tqdm.write(json.dumps({"final_test_metrics": test_metrics}, indent=2))
+
         with (output_dir / "metrics.json").open("w", encoding="utf-8") as handle:
             json.dump(history, handle, indent=2)
 
         if wandb_run is not None and wandb_module is not None:
+            if test_metrics:
+                for key, value in test_metrics.items():
+                    wandb_run.summary[key] = value
             log_output_artifact(
                 wandb_module=wandb_module,
                 run=wandb_run,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import random
 from collections import Counter
@@ -761,3 +762,63 @@ def build_wandb_log_payload(
             payload[key] = wandb_module.Table(dataframe=table_df)
 
     return payload
+
+
+def build_wandb_split_charts(
+    *,
+    wandb_module,
+    history: Sequence[Dict[str, Any]],
+    chart_specs: Sequence[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if not history:
+        return {}
+
+    plot_module = getattr(wandb_module, "plot", None)
+    line_series = getattr(plot_module, "line_series", None) if plot_module is not None else None
+    if line_series is None:
+        return {}
+
+    epochs: list[float] = []
+    for row in history:
+        epoch_value = row.get("epoch")
+        if not isinstance(epoch_value, (int, float)):
+            return {}
+        epochs.append(float(epoch_value))
+
+    charts: Dict[str, Any] = {}
+    for spec in chart_specs:
+        chart_key = str(spec.get("key", "")).strip()
+        chart_title = str(spec.get("title", chart_key)).strip() or chart_key
+        series_specs = spec.get("series", [])
+        if not chart_key or not isinstance(series_specs, Sequence):
+            continue
+
+        series_keys: list[str] = []
+        series_values: list[list[float]] = []
+        for series_spec in series_specs:
+            if not isinstance(series_spec, Sequence) or len(series_spec) != 2:
+                continue
+            label, metric_key = series_spec
+            values: list[float] = []
+            valid_series = True
+            for row in history:
+                value = row.get(str(metric_key))
+                if not isinstance(value, (int, float)) or math.isnan(float(value)):
+                    valid_series = False
+                    break
+                values.append(float(value))
+            if valid_series:
+                series_keys.append(str(label))
+                series_values.append(values)
+
+        if len(series_values) < 2:
+            continue
+
+        charts[chart_key] = line_series(
+            xs=epochs,
+            ys=series_values,
+            keys=series_keys,
+            title=chart_title,
+            xname="epoch",
+        )
+    return charts
