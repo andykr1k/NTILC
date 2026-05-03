@@ -147,7 +147,10 @@ def load_benchmark_frames(
         result_row["variant_key"] = _variant_key(result_row)
         total_examples = _safe_float(result_row.get("total_examples")) or 0.0
         error_examples = _safe_float(result_row.get("error_examples")) or 0.0
-        result_row["error_rate"] = (error_examples / total_examples) if total_examples else 0.0
+        if total_examples:
+            result_row["error_rate"] = error_examples / total_examples
+        else:
+            result_row["error_rate"] = 1.0 if str(result_row.get("status", "")) != "ok" else 0.0
         model_rows.append(result_row)
 
         result_path_value = result_row.get("results_path")

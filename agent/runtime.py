@@ -130,8 +130,8 @@ class RuntimeConfig:
     tools_path: Path = DEFAULT_TOOLS_PATH
     embed_checkpoint_path: Path = DEFAULT_EMBED_CHECKPOINT_PATH
     qwen_model_name: str = DEFAULT_QWEN_MODEL_NAME
-    qwen_device: str = "cuda:7"
-    embed_device: str = "cuda:7"
+    qwen_device: str = "auto"
+    embed_device: str = "auto"
     qwen_dtype: str = "bfloat16"
     local_files_only: bool = False
     top_k: int = 5
@@ -262,10 +262,10 @@ def resolve_runtime_devices(qwen_device: str, embed_device: str) -> tuple[str, s
     if not torch.cuda.is_available():
         return "cpu", "cpu"
 
-    resolved_qwen = "cuda:7" if qwen_device == "auto" else qwen_device
+    resolved_qwen = "auto" if qwen_device == "auto" else qwen_device
     if embed_device == "auto":
         if torch.cuda.device_count() > 1:
-            return resolved_qwen, "cuda:7"
+            return resolved_qwen, "auto"
         return resolved_qwen, resolved_qwen
     return resolved_qwen, embed_device
 

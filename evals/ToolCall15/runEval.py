@@ -93,12 +93,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--qwen-device",
-        default="cuda:6",
+        default="auto",
         help='Torch device for Qwen. Uses a CUDA device when available if set to "auto".',
     )
     parser.add_argument(
         "--embed-device",
-        default="cuda:6",
+        default="auto",
         help='Torch device for the embedding model. Uses a CUDA device when available if set to "auto".',
     )
     parser.add_argument(
@@ -153,9 +153,9 @@ def load_json(path: Path) -> Any:
 def resolve_runtime_devices(qwen_device: str, embed_device: str) -> tuple[str, str]:
     if torch.cuda.is_available():
         if qwen_device == "auto":
-            qwen_device = "cuda:0"
+            qwen_device = "auto"
         if embed_device == "auto":
-            embed_device = "cuda:1" if torch.cuda.device_count() > 1 else qwen_device
+            embed_device = "auto" if torch.cuda.device_count() > 1 else qwen_device
         return qwen_device, embed_device
 
     if qwen_device == "auto":

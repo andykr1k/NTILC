@@ -75,7 +75,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--embed-device",
-        default="cuda:5",
+        default="auto",
         help='Torch device for embedding inference. Uses CUDA when available if set to "auto".',
     )
     parser.add_argument(
@@ -100,7 +100,7 @@ def load_json(path: Path) -> Any:
 
 def resolve_runtime_device(device_name: str) -> str:
     if device_name == "auto":
-        return "cuda:5" if torch.cuda.is_available() else "cpu"
+        return "auto" if torch.cuda.is_available() else "cpu"
     return device_name
 
 

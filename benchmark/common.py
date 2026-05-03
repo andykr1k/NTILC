@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
-
+import random
 from training.dataset_utils import load_dataset_rows, write_json, write_jsonl
 
 
@@ -105,6 +105,21 @@ def summarize_parameters(parameters: dict[str, Any]) -> str:
         parts.append(f"{name}{marker}:{field_type}")
     return ", ".join(parts)
 
+def sample_tools_for_query(
+    tools: Sequence[dict[str, Any]],
+    correct_tool_name: str,
+    *,
+    n: int = 50,
+    rng: random.Random | None = None,
+) -> list[dict[str, Any]]:
+    _rng = rng or random
+    correct = [t for t in tools if t.get("name") == correct_tool_name]
+    distractors = [t for t in tools if t.get("name") != correct_tool_name]
+    
+    k = min(n - len(correct), len(distractors))
+    sampled = correct + _rng.sample(distractors, k)
+    _rng.shuffle(sampled)
+    return sampled
 
 def render_tool_catalog(
     tools: Sequence[dict[str, Any]],

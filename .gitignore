@@ -52,6 +52,9 @@ logs/**
 *.swo
 *~
 
+# Local environment files
+.env
+
 # OS
 .DS_Store
 Thumbs.db
@@ -83,8 +86,6 @@ site/.next/
 site/out/
 site/.vercel/
 site/.turbo/
-
-.env
 .codex
 
 # LaTeX auxiliary files
@@ -99,3 +100,8 @@ site/.turbo/
 *.gz
 
 __old__
+
+benchmark/output/
+analysis/*.csv
+analysis/*.json
+data/**/output/

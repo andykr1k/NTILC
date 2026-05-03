@@ -1,0 +1,396 @@
+\documentclass{article}
+\usepackage{neurips_2026}
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{amsmath}        % math environments
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{xcolor}         % colors
+\usepackage{graphicx}       % figures
+\usepackage{subcaption}     % subfigures
+\usepackage{algorithm}      % algorithm environment
+\usepackage{algpseudocode}  % pseudocode
+\usepackage{multirow}       % multirow table cells
+\usepackage{enumitem}       % itemize controls
+\usepackage{float}          % [H] force-here placement
+
+% Placeholder command for missing values
+\newcommand{\placeholder}[1]{\textcolor{red}{\textbf{[#1]}}}
+
+\title{NTILC: Neural Tool Invocation via Learned Compression}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Tool-augmented language models increasingly depend on large registries of callable APIs, functions, and local actions.
+The common practice of placing tool definitions directly in the prompt creates a linear registry cost that consumes context budget, decreases latency, and reduces selection accuracy when irrelevant tools are present.
+We introduce NTILC, a neural tool-dispatch framework that replaces in-context registry look-up with learned latent retrieval.
+NTILC encodes user intent and tool schemas into a shared embedding space, retrieves the most likely tool outside the language-model context, and uses only the selected tool schema for constrained argument generation.
+Central to our approach is a signature-aware composite objective combining Circle Loss with a Functional Margin Loss that separates semantically similar but executionally incompatible tools.
+We evaluate NTILC on public tool-selection and function-calling benchmarks and report context token usage, retrieval accuracy, and selection latency metrics.
+Across these settings, NTILC reduces \placeholder{SOMETHING GOOD}.
+\end{abstract}
+
+\section{Introduction}
+
+Language models have become the reasoning core of increasingly autonomous systems \cite{li2025teachinglanguagemodelsreason, Plaat_2025, parisi2022talmtoolaugmentedlanguage}. In this architectural framework, agents are defined as LLMs augmented with tool registries, operating through a modular pipeline comprising task planning, tool discovery, parameter generation, and response synthesis. Rather than encoding all world knowledge parametrically, modern agents extend their capabilities by invoking external tools: web APIs, code interpreters, database queries, and shell commands. While this integration has unlocked a new tier of agentic autonomy, it has introduced a practical bottleneck in the tool discovery and selection phase that scales poorly with the agent’s functional surface area.
+
+The standard approach to tool-augmented inference, which we refer to as In-Context Tooling (ICT), works as follows: before the model sees the user's request, every available tool definition is inserted into the context window.
+The model then reads the full registry and generates a structured invocation.
+This approach is simple and effective for small toolsets, but it imposes a cost that scales linearly with the number of tools.
+A registry of 5,000 tools, each with a mean schema size of 120 tokens, requires roughly 600,000 input tokens before the model sees any task-specific information.
+Even when a long-context model can technically accommodate such registries, the overhead is not merely a capacity problem; it is an efficiency and reliability problem.
+The registry raises input-token cost on every call and prior work has shown that accuracy degrades as the context windows consumption increases \cite{liu2023lostmiddlelanguagemodels}.
+Figure~\ref{fig:scaling} illustrates how these costs compound as registry size grows.
+
+To address these limitations, we propose \textbf{NTILC} (Neural Tool Invocation via Learned Compression).
+Rather than forcing the agent to read raw text schemas at every call, NTILC compresses the entire tool registry into a specialized embedding space.
+At inference time, the agent's intent is encoded into a query vector, which is matched against the tool index via nearest-neighbor search.
+This eliminates the tool registry's footprint from the context window entirely, reducing registry prompt tokens from $O(N)$ to $O(1)$ regardless of how many tools are registered.
+
+A key challenge in offloading tool selection to an embedding space is that standard semantic encoders prioritize topical similarity over functional compatibility.
+In large registries, tools frequently share nearly identical natural-language descriptions yet have incompatible argument types.
+For example, \texttt{getWeather(zipcode: int)} and \texttt{getWeather(lat: float, lon: float)} describe the same concept but cannot be substituted for one another.
+We term this phenomenon \textit{semantic blur}.
+To address it, we propose a \textbf{Functional Margin (FM) Loss} that applies a repulsive force between tools whose descriptions are similar but whose executable signatures differ.
+Combined with Circle Loss for query-tool alignment, this composite objective produces an embedding space that is not only semantically coherent but executionally precise.
+
+We evaluate NTILC on ToolBench, BFCL, API-Bank, MetaTool, and ToolEyes.
+On ToolBench, NTILC achieves \placeholder{X}\% Top-1 accuracy with zero registry prompt tokens, compared to \placeholder{Y}\% for the strongest ICT baseline at \placeholder{Z}K registry tokens.
+Ablations confirm that the FM Loss drives the improvement on semantic-blur subsets beyond what Circle Loss alone achieves.
+
+Our contributions are:
+\begin{itemize}[leftmargin=*,nosep]
+    \item We introduce \textbf{NTILC}, a framework that replaces linear-scaling in-context registry scanning with an external learned dispatch step, reducing registry prompt tokens from $O(N)$ to $O(1)$ with respect to the number of registered tools.
+    \item We propose a \textbf{signature-aware Functional Margin (FM) Loss}, a composite training objective that resolves semantic blur by separating tools with overlapping natural-language descriptions but incompatible executable signatures.
+    \item We evaluate NTILC on \textbf{public tool-selection and function-calling benchmarks} including ToolBench, BFCL, API-Bank, MetaTool, and ToolEyes, and report token cost, latency, and accuracy under increasing registry size.
+\end{itemize}
+
+\section{Related Work}
+
+The evolution of tool-augmented large language models has primarily focused on expanding the knowledge boundaries of parametric models through external interfaces \placeholder{CITE HERE}.
+We survey five lines of work most relevant to NTILC.
+
+\paragraph{In-Context Tooling (ICT) and Prompt-Centric Methods.}
+Prompt-centric tool-use systems provide tool descriptions directly in the system prompt \placeholder{CITE HERE}.
+ICT is effective for small toolsets but suffers from a linear registry cost: as new tools are added, the registry consumes a growing share of the context window, increases prefill work, raises input-token cost, and exposes the model to more distractor tools \placeholder{CITE HERE}.
+NTILC addresses this by removing the full registry from the prompt.
+
+\paragraph{Retrieval-Augmented Tool Selection.}
+As tool libraries scaled to hundreds or thousands of APIs, research shifted toward retrieval-based architectures \placeholder{CITE HERE}.
+Typical implementations use sparse or dense retrieval to fetch a small set of relevant tool schemas into the context window dynamically.
+This reduces the prompt from the full registry to top-$k$ candidate schemas, but it does not remove tool text from the LLM prompt and remains vulnerable to semantically plausible distractors.
+Semantic retrieval often fails when tools share a topic but have incompatible functional signatures: the semantic-blur failure mode described above.
+Unlike standard RAG-style tool selection, NTILC treats retrieval as the dispatch decision itself: the full registry is never injected into the prompt, and only the selected schema is exposed to the decoder as an output constraint for argument generation.
+
+\paragraph{Efficiency and Context Optimization.}
+Recent efforts have focused on memory compression, prompt caching, and long-context models \placeholder{CITE HERE}.
+These techniques reduce the pain of large prompts but do not change the fact that in-context registries scale linearly with the number and verbosity of tools.
+NTILC is complementary to long-context and caching techniques: it specializes in moving the tool registry out of the active prompt while preserving tool-selection accuracy.
+
+\paragraph{Contrastive and Metric Learning.}
+Our FM Loss builds on metric-learning objectives \placeholder{CITE HERE}.
+Standard contrastive and ranking losses enforce relative ordering of distances between embeddings, while Circle Loss weights each similarity score independently and concentrates gradient on hard examples \cite{sun2020circlelossunifiedperspective}.
+Our FM Loss is differentiated by using the \textit{functional signature} of a tool, rather than only a semantic class label, as the criterion for what should be pushed apart in the embedding space.
+
+\section{Method}
+
+The NTILC framework shifts tool selection from an in-context reading task to an embedding-space dispatch task.
+We first formalize the problem setting, then describe the model architecture, the signature-aware training objective, and the agent harness.
+
+\paragraph{Problem Setting.}
+Given a user request $q$ and a registry $\mathcal{T}$ of $N$ tools, the goal is to select the correct tool $t^* \in \mathcal{T}$ and generate valid arguments $a^*$.
+Standard ICT passes the full registry into the LLM context: the input is $[S, \mathcal{T}, q]$, where $S$ is the system prompt, and the prompt length is $O(N)$.
+NTILC replaces the registry with an embedding index $\mathcal{V}$ built offline; the LLM input at inference is $[S, D, q]$, where $D$ is a fixed dispatcher instruction, giving $O(1)$ prompt length regardless of $N$.
+
+\subsection{Model Architecture}
+\label{sec:arch}
+
+The NTILC encoder is built on a \texttt{sentence-transformers/all-MiniLM-L6-v2} backbone with 22.7M parameters.
+We append a lightweight two-layer projection head that maps the backbone's hidden representation to a 128-dimensional embedding space.
+All output embeddings are L2-normalized, which bounds pairwise distances to a fixed range and makes the margin hyperparameter consistent across different registries.
+
+The encoder is used in a dual-encoder configuration at inference time: natural language queries and tool schemas are encoded independently, and retrieval is performed by nearest-neighbor search in the shared embedding space.
+This design allows the tool index to be built offline and updated incrementally without retraining the encoder.
+
+Before indexing, each tool is canonicalized into a tuple
+\begin{equation}
+    t = (n,\ d,\ A,\ R,\ e),
+\end{equation}
+where $n$ is the tool name, $d$ is a natural-language description, $A$ is the ordered argument schema, $R$ is the return schema when available, and $e$ contains metadata such as side-effect class and authentication requirements.
+NTILC encodes a textual rendering of this canonical schema for indexing, while the functional signature terms in the loss are computed from $A$, $R$, and $e$.
+
+\subsection{Optimization Strategy}
+
+The central design goal is an embedding space where proximity implies not just semantic similarity but \textit{executional substitutability}: tools that can safely be swapped for one another should cluster together; tools with incompatible signatures should be pushed apart, even if their descriptions read similarly.
+
+\textbf{Semantic Topology via Circle Loss.}
+We adopt Circle Loss \cite{sun2020circlelossunifiedperspective} as the query-tool alignment term.
+Compared to standard contrastive losses, Circle Loss weights each pairwise similarity score individually, concentrating more gradient signal on examples near the retrieval decision boundary.
+The objective is:
+\begin{equation}
+    L_{circle} = \log \left[ 1 + \sum_{j=1}^m \sum_{i=1}^n \exp\left(\gamma (\alpha_n^j (s_n^j - \Delta_n) - \alpha_p^i (s_p^i - \Delta_p))\right) \right]
+\end{equation}
+where $\gamma$ scales the similarity scores and the $\alpha$ factors adaptively weight positive and negative pairs.
+We set $\gamma = \placeholder{80}$, $\Delta_p = \placeholder{0.45}$, $\Delta_n = \placeholder{0.55}$ in all experiments.
+
+\textbf{Resolving Semantic Blur via Functional Margin (FM) Loss.}
+Circle Loss alone is insufficient when tools have nearly identical descriptions but incompatible argument types.
+To handle these cases, we propose the \textbf{Functional Margin (FM) Loss}, which applies an explicit repulsive force only to semantic-blur hard negatives.
+
+A pair $(t_i, t_j)$ is included in the hard-negative set $\mathcal{K}$ when:
+\begin{equation}
+    \operatorname{sim}_{desc}(t_i,t_j) \geq \tau_s
+    \quad \text{and} \quad
+    d_{\text{func}}(t_i,t_j) \geq \tau_f,
+\end{equation}
+where $\operatorname{sim}_{desc}$ is the cosine similarity between description embeddings and $d_{\text{func}}$ is a normalized signature distance.
+For each tool $t$, define $\operatorname{Sig}(t)$ as the set of normalized signature atoms derived from required argument names, argument types, return type, arity, and side-effect class.
+We compute functional distance as:
+\begin{equation}
+    d_{\text{func}}(t_i,t_j) =
+    1 -
+    \frac{|\operatorname{Sig}(t_i) \cap \operatorname{Sig}(t_j)|}
+    {|\operatorname{Sig}(t_i) \cup \operatorname{Sig}(t_j)|}.
+\end{equation}
+Let $z_i$ and $z_j$ be L2-normalized tool embeddings and $d_{\text{embed}}(t_i,t_j)=\|z_i-z_j\|_2$.
+The FM loss is:
+\begin{equation}
+    L_{FM} =
+    \frac{1}{|\mathcal{K}|}
+    \sum_{(t_i,t_j) \in \mathcal{K}}
+    \max\!\left(0,\ m_0 + \lambda d_{\text{func}}(t_i,t_j) - d_{\text{embed}}(t_i,t_j)\right)^2.
+\end{equation}
+Tools are pushed apart only when they are both semantically confusable and functionally incompatible.
+The adaptive margin $m_0 + \lambda d_{\text{func}}$ requires greater embedding separation as signatures become less substitutable.
+
+\textbf{Composite Training Objective.}
+The full \textbf{Functional Dispatch Loss} combines query-tool alignment with signature-aware tool-tool separation:
+\begin{equation}
+    \mathcal{L}_{FD} = \alpha L_{circle} + \beta L_{FM}.
+\end{equation}
+The $\alpha$ coefficient governs the broad semantic structure of the embedding space, while $\beta$ controls the strength of functional discrimination among confusable tools.
+We sweep $\alpha \in \{0.1, 0.5, 1.0\}$ and $\beta \in \{0.1, 0.5, 1.0, 2.0\}$, with additional grids for $m_0$ and $\lambda$ reported in the appendix.
+The optimal configuration is \placeholder{OPTIMAL LOSS WEIGHTS} (see Section~\ref{sec:ablation}).
+
+\subsection{Training Pipeline}
+
+The NTILC training procedure follows a three-stage curriculum:
+\begin{enumerate}[leftmargin=*,nosep]
+    \item \textbf{Initial Domain Mapping:} The encoder is initialized from a general text-embedding backbone and optionally adapted on public API documentation.
+    \item \textbf{Benchmark Supervision:} The model is fine-tuned on train splits from the benchmark adapters, using benchmark-provided tool labels whenever available.
+    \item \textbf{Manifold Hardening:} We mine semantic-blur hard negatives within each registry and train with $\mathcal{L}_{FD}$, monitoring Top-1 retrieval accuracy, semantic-blur accuracy, and signature error rate on validation splits.
+\end{enumerate}
+
+\subsection{Tool-Selection Harness and Latent Dispatch}
+
+At inference time, the model does not receive the full tool registry in its prompt.
+Instead, the harness encodes the user request into a query vector and runs nearest-neighbor search against the pre-built tool index using FAISS \cite{johnson2017billionscalesimilaritysearchgpus, douze2025faisslibrary}.
+This reduces registry prompt tokens from $O(N)$ to zero; the registry remains available externally as an embedding index.
+
+Once a tool is selected, the harness ensures the model generates syntactically valid arguments by enforcing a finite-state machine (FSM) constraint tied to the JSON schema of the retrieved tool via the Outlines library \cite{willard2023efficientguidedgenerationlarge}.
+The selected schema serves as an output constraint rather than a natural-language registry insertion.
+The full process is summarized in Algorithm~\ref{alg:intercept}.
+
+\begin{algorithm}
+\caption{NTILC Tool-Selection Loop}
+\label{alg:intercept}
+\begin{algorithmic}[1]
+\Require Query $q$, encoder $E$, tool index $\mathcal{V}$, LLM $\mathcal{M}$
+\State $v_q \leftarrow E(q)$ \Comment{Encode intent to embedding space}
+\State $\hat{t} \leftarrow \text{NearestNeighbor}(\mathcal{V},\, v_q)$ \Comment{Select one tool}
+\State $\text{args} \leftarrow \mathcal{M}(q,\, \text{FSM}(\hat{t}.\text{schema}))$ \Comment{Constrained argument generation}
+\State \Return $(\hat{t}, \text{args})$
+\end{algorithmic}
+\end{algorithm}
+
+\section{Experiments}
+
+We evaluate NTILC on two claims: (1) it reduces context token cost during tool selection, and (2) it preserves or improves tool-retrieval accuracy while reducing inference time.
+All results are reported on public tool-selection or function-calling benchmarks after schema canonicalization.
+
+\subsection{Experimental Setup}
+
+We evaluate on five public benchmarks, each normalized into a common representation:
+\begin{equation}
+    x = (q,\ \mathcal{T},\ t^*,\ a^*,\ y),
+\end{equation}
+where $q$ is the user request, $\mathcal{T}$ is the available tool registry, $t^*$ is the target tool, $a^*$ contains gold arguments when provided, and $y$ is a benchmark evaluator signal.
+
+\begin{table}[H]
+\caption{Public benchmark coverage. Each row corresponds to an adapter that maps the original benchmark into the NTILC tool-selection format.}
+\label{tab:benchmarks}
+\centering
+\small
+\begin{tabular}{lcc}
+\toprule
+Benchmark & Primary Signal & Tool Registry Size \\
+\midrule
+ToolBench \cite{qin2023toolllmfacilitatinglargelanguage}    & Pass Rate / Win Rate   & 16,464 \\
+API-Bank \cite{li2023apibankcomprehensivebenchmarktoolaugmented}     & Tool Call Accuracy     & 3,169 \\
+BFCL \cite{patil2025the}         & AST / Exec. Success    & 2,138 \\
+ToolEyes \cite{ye2024tooleyesfinegrainedevaluationtool}     & Planning / Tool Call   & 588 \\
+MetaTool \cite{huang2024metatoolbenchmarklargelanguage}     & Selection / Awareness  & 199 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The benchmarks above allows us to measure how performance and cost scale with registry size.
+Semantic-blur hard-negative pairs are mined within each registry: a pair $(t_i, t_j)$ qualifies when $\operatorname{sim}_{desc}(t_i,t_j) \geq \tau_s$ and $d_{\text{func}}(t_i,t_j) \geq \tau_f$, producing benchmark-specific subsets used for both training and evaluation.
+
+\begin{table}[H]
+\caption{Registry and semantic-blur statistics per benchmark adapter.}
+\label{tab:dataset}
+\centering
+\small
+\begin{tabular}{lcc}
+\toprule
+Benchmark & \# Unique Tools & \# Blur Pairs \\
+\midrule
+ToolBench & 16,464 & 2,008 \\
+API-Bank & 3,169 & 501 \\
+BFCL & 2,138 & 290 \\
+ToolEyes & 588 & 34 \\
+MetaTool & 199 & 9 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Context Token Cost}
+
+Traditional ICT places the full tool registry in the prompt on every tool-selection call.
+Let $S$ be non-tool system-prompt tokens, $Q$ be user-query tokens, $D$ be the fixed NTILC dispatcher instruction, $N$ be the number of available tools, and $\bar{r}$ be the average schema length in tokens.
+Table~\ref{tab:congestion} formalizes the token accounting.
+NTILC keeps the registry outside the prompt as an embedding index, yielding constant prompt length regardless of $N$.
+
+\begin{table}[H]
+\caption{Token cost for ICT versus NTILC. Registry prompt tokens scale linearly with tools under ICT; NTILC keeps the registry external to the LLM prompt.}
+\label{tab:congestion}
+\centering
+\small
+\begin{tabular}{lcccc}
+\toprule
+Method & System Prompt & Registry Prompt Cost & Total Prompt Tokens & Scaling \\
+\midrule
+ICT & $S$ & $N\bar{r}$ & $S + Q + N\bar{r}$ & $O(N)$ \\
+\textbf{NTILC} & $S + D$ & \textbf{0} & $\mathbf{S + D + Q}$ & $\mathbf{O(1)}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{figures/context_length_by_tools.png}
+    \caption{Prompt context length as a function of the number of available tools. ICT incurs linear growth by inserting the full tool registry into the prompt, whereas NTILC externalizes the registry through latent retrieval and preserves an approximately constant context length.}
+    \label{fig:context_length_by_tools}
+\end{figure}
+
+% \begin{figure}[H]
+% \centering
+% \placeholder{FIGURE: Three aligned line plots over registry size: (a) registry prompt tokens, (b) tool-selection latency, and (c) Top-1 tool-selection accuracy. Plot ICT baselines and NTILC on the same x-axis: number of registered tools.}
+% \caption{Token cost and accuracy as the number of registered tools increases. ICT latency and token count grow linearly; NTILC remains constant.}
+% \label{fig:scaling}
+% \end{figure}
+
+\subsection{Inference Time and Tool-Retrieval Accuracy}
+
+\placeholder{QUALITATIVE RESULTS: Show 2--3 examples where NTILC correctly distinguishes semantically similar tools that ICT baselines confuse. Follow with 1--2 failure cases, e.g., tools with ambiguous names or entirely missing schema fields, and discuss root causes.}
+
+We compare NTILC against ICT baselines using Qwen3-27B, ChatGPT 5, Gemini 3 Pro, and Claude Sonnet 4.7.
+Each ICT baseline receives the same canonicalized tool registry in the prompt.
+NTILC uses Qwen3-27B for constrained argument generation and the learned tool-embedding index for tool selection.
+
+\begin{table}[H]
+\caption{Main inference-time comparison.}
+\label{tab:model_comparison}
+\centering
+\small
+\begin{tabular}{lllccccc}
+\toprule
+Dataset & Method & Registry Tokens & Total Tokens & Top-1 Acc. & Top-5 Acc. & Latency (ms) \\
+\midrule
+ToolBench & Qwen3-27B (ICT) & 6,901 & 7,864 & 84.61\% & 98.07\% & 13,259 \\
+ & ChatGPT 5 (ICT) & 6,653 & 7,611 & 85.58\% & 99.04\% & 34,718 \\
+ & Gemini 3 Pro (ICT) & 7,572 & 8,433 & 88.46\% & 100\% & 38,868 \\
+ & Claude Sonnet 4.7 (ICT) & 6,701 & 7,821 & 89.42\% & 100\% & 39,949 \\
+ & \textbf{NTILC} & \textbf{0}  & \textbf{1,588} & \textbf{94.23\%} & \textbf{100\%} & \textbf{9,356} \\
+\midrule
+BFCL & Qwen3-27B (ICT) & \placeholder{N} & \placeholder{N} & \placeholder{N}\% & \placeholder{N}\% & \placeholder{N} \\
+ & ChatGPT 5 (ICT) & \placeholder{N} & \placeholder{N} & \placeholder{N}\% & \placeholder{N}\% & \placeholder{N} \\
+ & Gemini 3 Pro (ICT) & \placeholder{N} & \placeholder{N} & \placeholder{N}\% & \placeholder{N}\% & \placeholder{N} \\
+ & Claude Sonnet 4.7 (ICT) & \placeholder{N} & \placeholder{N} & \placeholder{N}\% & \placeholder{N}\% & \placeholder{N} \\
+ & \textbf{NTILC} & \textbf{0} & \textbf{\placeholder{N}} & \textbf{\placeholder{N}\%} & \textbf{\placeholder{N}\%} & \textbf{\placeholder{N}} \\
+\midrule
+API-Bank & Qwen3-27B (ICT) & \placeholder{N} & \placeholder{N} & \placeholder{N}\% & \placeholder{N}\% & \placeholder{N} \\
+ & ChatGPT 5 (ICT) & \placeholder{N} & \placeholder{N} & \placeholder{N}\% & \placeholder{N}\% & \placeholder{N} \\
+ & Gemini 3 Pro (ICT) & \placeholder{N} & \placeholder{N} & \placeholder{N}\% & \placeholder{N}\% & \placeholder{N} \\
+ & Claude Sonnet 4.7 (ICT) & \placeholder{N} & \placeholder{N} & \placeholder{N}\% & \placeholder{N}\% & \placeholder{N} \\
+ & \textbf{NTILC} & \textbf{0} & \textbf{\placeholder{N}} & \textbf{\placeholder{N}\%} & \textbf{\placeholder{N}\%} & \textbf{\placeholder{N}} \\
+\midrule
+MetaTool & Qwen3-27B (ICT) & \placeholder{N} & \placeholder{N} & \placeholder{N}\% & \placeholder{N}\% & \placeholder{N} \\
+ & ChatGPT 5 (ICT) & \placeholder{N} & \placeholder{N} & \placeholder{N}\% & \placeholder{N}\% & \placeholder{N} \\
+ & Gemini 3 Pro (ICT) & \placeholder{N} & \placeholder{N} & \placeholder{N}\% & \placeholder{N}\% & \placeholder{N} \\
+ & Claude Sonnet 4.7 (ICT) & \placeholder{N} & \placeholder{N} & \placeholder{N}\% & \placeholder{N}\% & \placeholder{N} \\
+ & \textbf{NTILC} & \textbf{0} & \textbf{\placeholder{N}} & \textbf{\placeholder{N}\%} & \textbf{\placeholder{N}\%} & \textbf{\placeholder{N}} \\
+\midrule
+ToolEyes & Qwen3-27B (ICT) & \placeholder{N} & \placeholder{N} & \placeholder{N}\% & \placeholder{N}\% & \placeholder{N} \\
+ & ChatGPT 5 (ICT) & \placeholder{N} & \placeholder{N} & \placeholder{N}\% & \placeholder{N}\% & \placeholder{N} \\
+ & Gemini 3 Pro (ICT) & \placeholder{N} & \placeholder{N} & \placeholder{N}\% & \placeholder{N}\% & \placeholder{N} \\
+ & Claude Sonnet 4.7 (ICT) & \placeholder{N} & \placeholder{N} & \placeholder{N}\% & \placeholder{N}\% & \placeholder{N} \\
+ & \textbf{NTILC} & \textbf{0} & \textbf{\placeholder{N}} & \textbf{\placeholder{N}\%} & \textbf{\placeholder{N}\%} & \textbf{\placeholder{N}} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Retrieval and Loss Ablations}
+\label{sec:ablation}
+
+Table~\ref{tab:retrieval} isolates the tool-retrieval component from the LLM argument-generation component.
+This table is the primary evidence that the Functional Margin Loss, not only the model backbone, drives improvement under semantic blur.
+
+\begin{table}[H]
+\caption{Tool-retrieval ablation on pooled public benchmark test splits. Functional error rate measures the fraction of selected tools whose argument contract is incompatible with the gold tool.}
+\label{tab:retrieval}
+\centering
+\small
+\begin{tabular}{lcccc}
+\toprule
+Retriever / Loss & Top-1 Acc. & Top-5 Acc. & Semantic-Blur Acc. & Functional Error Rate \\
+\midrule
+BM25 & 26.6\% & 44.7\% & 12.5\% & 72.7\% \\
+Qwen3-Embedding-8B & 82.4\% & 95.4\% & 66.7\% & 17.1\% \\
+Circle Loss only & 89.9\% & 96.4\% & 70.8\% & 10.1\% \\
+\textbf{NTILC ($\mathcal{L}_{FD}$)} & \textbf{91.3\%} & \textbf{97.4\%} & \textbf{75.0\%} & \textbf{8.7\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Conclusion}
+
+NTILC achieves substantial reductions in prompt token cost and selection latency without sacrificing accuracy.
+On ToolBench, it reaches \placeholder{X}\% Top-1 accuracy with zero registry prompt tokens, surpassing the strongest ICT baseline by \placeholder{Y} points while reducing latency by \placeholder{Z}\%.
+The Functional Margin Loss is the key driver of gains on semantic-blur subsets, as confirmed by ablations.
+More broadly, NTILC demonstrates that the tool registry need not live in the context window: moving it to a compact embedding index decouples agent capability from prompt length, a property that becomes increasingly important as tool registries grow.
+
+\paragraph{Limitations and Future Work.}
+NTILC requires the tool registry to be indexed ahead of time.
+Static tool schemas are easily handled, but tools with highly dynamic or state-dependent documentation may require frequent re-indexing or a hybrid approach that retrieves a short schema snippet at query time.
+NTILC also focuses on selecting the correct tool; argument generation and tool-execution safety remain separate evaluation surfaces.
+Future work will examine larger and more dynamic registries, online index updates when tools are added or modified, and richer functional-distance metrics that capture schema compatibility beyond argument names and primitive types.
+
+\paragraph{Broader Impact.}
+NTILC changes how tools are selected, not what policy governs their use.
+A malicious or ambiguous query could still cause a model to invoke an unintended tool, particularly when the registry contains tools with external side effects.
+We recommend pairing NTILC with allow-lists, per-tool risk labels, and pre-dispatch policy filters.
+The efficiency gains also lower the barrier to deploying large-registry agents, which warrants care around intent-level safety filtering applied before the dispatch step.
+
+\bibliographystyle{abbrvnat}
+\bibliography{references}
+
+\end{document}

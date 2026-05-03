@@ -32,12 +32,14 @@ from benchmark.common import (
     write_json,
     write_jsonl,
 )
+from benchmark.env import load_env_file
 
 DEFAULT_DATASET_PATH = REPO_ROOT / "data" / "OSS" / "tool_embedding_dataset_test.jsonl"
 DEFAULT_TOOLS_PATH = REPO_ROOT / "data" / "OSS" / "tools.json"
 DEFAULT_EMBEDDING_ROOT = REPO_ROOT / "data" / "OSS" / "output"
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "benchmark" / "output"
 DEFAULT_HYBRID_RERANKER = "Qwen/Qwen3.5-27B"
+DEFAULT_DOTENV_PATH = REPO_ROOT / ".env"
 
 
 def parse_args() -> argparse.Namespace:
@@ -55,7 +57,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-name", default="")
     parser.add_argument("--limit", type=int, default=0, help="Optional cap on benchmark examples for quick debug runs.")
     parser.add_argument("--ranking-limit", type=int, default=DEFAULT_RANKING_LIMIT)
-    parser.add_argument("--embedding-device", default="cuda:4")
+    parser.add_argument("--embedding-device", default="auto")
     parser.add_argument("--embedding-top-k", type=int, default=5)
     parser.add_argument("--hf-model", action="append", default=[], help="Repeat to benchmark local HF instruction models.")
     parser.add_argument("--hf-device", default="auto")
@@ -68,13 +70,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--openai-model", action="append", default=[], help="Repeat to benchmark OpenAI API models.")
     parser.add_argument("--anthropic-model", action="append", default=[], help="Repeat to benchmark Anthropic API models.")
     parser.add_argument("--gemini-model", action="append", default=[], help="Repeat to benchmark Gemini API models.")
-    parser.add_argument("--api-max-output-tokens", type=int, default=160)
+    parser.add_argument(
+        "--api-max-output-tokens",
+        type=int,
+        default=0,
+        help=(
+            "Optional output token cap for API models. "
+            "Use 0 to omit provider caps where supported."
+        ),
+    )
     parser.add_argument("--api-timeout-seconds", type=int, default=120)
     parser.add_argument(
         "--pricing-path",
         type=Path,
         default=None,
         help="Optional JSON file mapping model_name -> {input_per_million_usd, output_per_million_usd}.",
+    )
+    parser.add_argument(
+        "--dotenv-path",
+        type=Path,
+        default=DEFAULT_DOTENV_PATH,
+        help="Optional .env file loaded before constructing API adapters.",
     )
     return parser.parse_args()
 
@@ -122,6 +138,7 @@ def persist_model_results(
 
 def main() -> None:
     args = parse_args()
+    loaded_env_keys = load_env_file(args.dotenv_path)
     run_name = build_run_name(args)
     run_dir = args.output_root / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -314,6 +331,8 @@ def main() -> None:
             "anthropic_models": list(args.anthropic_model),
             "gemini_models": list(args.gemini_model),
             "pricing_path": str(args.pricing_path.resolve()) if args.pricing_path is not None else "",
+            "dotenv_path": str(args.dotenv_path.resolve()) if args.dotenv_path.exists() else str(args.dotenv_path),
+            "loaded_env_keys": loaded_env_keys,
         },
         model_summaries=model_summaries,
     )

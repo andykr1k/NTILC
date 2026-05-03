@@ -3,11 +3,13 @@ transformers
 tokenizers
 datasets
 pydantic
+python-dotenv
 outlines
 wandb
 streamlit
 faker
 pandas
+pyarrow
 numpy
 matplotlib
 seaborn

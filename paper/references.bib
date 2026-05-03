@@ -1,0 +1,158 @@
+# Language models have become the reasoning core of increasingly autonomous systems
+@misc{li2025teachinglanguagemodelsreason,
+      title={Teaching Language Models to Reason with Tools}, 
+      author={Chengpeng Li and Zhengyang Tang and Ziniu Li and Mingfeng Xue and Keqin Bao and Tian Ding and Ruoyu Sun and Benyou Wang and Xiang Wang and Junyang Lin and Dayiheng Liu},
+      year={2025},
+      eprint={2510.20342},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2510.20342}, 
+}
+
+@article{Plaat_2025,
+   title={Agentic Large Language Models, a Survey},
+   volume={84},
+   ISSN={1076-9757},
+   url={http://dx.doi.org/10.1613/jair.1.18675},
+   DOI={10.1613/jair.1.18675},
+   journal={Journal of Artificial Intelligence Research},
+   publisher={AI Access Foundation},
+   author={Plaat, Aske and Van Duijn, Max and Van Stein, Niki and Preuss, Mike and Van der Putten, Peter and Batenburg, Kees Joost},
+   year={2025},
+   month=Dec }
+
+@misc{parisi2022talmtoolaugmentedlanguage,
+      title={TALM: Tool Augmented Language Models}, 
+      author={Aaron Parisi and Yao Zhao and Noah Fiedel},
+      year={2022},
+      eprint={2205.12255},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2205.12255}, 
+}
+
+# he registry raises input-token cost on31
+every call and prior work has shown that accuracy degrades as the context windows consumption32
+increases
+@misc{liu2023lostmiddlelanguagemodels,
+      title={Lost in the Middle: How Language Models Use Long Contexts}, 
+      author={Nelson F. Liu and Kevin Lin and John Hewitt and Ashwin Paranjape and Michele Bevilacqua and Fabio Petroni and Percy Liang},
+      year={2023},
+      eprint={2307.03172},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2307.03172}, 
+}
+
+# The evolution of tool-augmented large language models has primarily focused on expanding the knowledge boundaries of parametric models through external interfaces
+
+# Prompt-centric tool-use systems pro-67
+vide tool descriptions directly in the system prompt 
+
+# ICT is effective for small toolsets68
+but suffers from a linear registry cost: as new tools are added, the registry consumes a growing share of the context window, increases prefill work, raises input-token cost, and exposes the model to more distractor tools 
+
+# As tool libraries scaled to hundreds or thousands of APIs,research shifted toward retrieval-based architectures 
+
+# Recent efforts have focused on memory compression, prompt caching, and long-context models
+
+# Our FM Loss builds on metric-learning objectives 
+
+# standard contrastive and ranking losses enforce relative ordering of distances between embeddings, while Circle Loss weights each similarity score independently and concentrates gradient on hard examples
+
+# We adopt Circle Loss
+@misc{sun2020circlelossunifiedperspective,
+      title={Circle Loss: A Unified Perspective of Pair Similarity Optimization}, 
+      author={Yifan Sun and Changmao Cheng and Yuhan Zhang and Chi Zhang and Liang Zheng and Zhongdao Wang and Yichen Wei},
+      year={2020},
+      eprint={2002.10857},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2002.10857}, 
+}
+
+# Instead, the harness encodes the user request into a query vector and runs nearest-neighbor search against the pre-built tool index using FAISS
+@misc{johnson2017billionscalesimilaritysearchgpus,
+      title={Billion-scale similarity search with GPUs}, 
+      author={Jeff Johnson and Matthijs Douze and Hervé Jégou},
+      year={2017},
+      eprint={1702.08734},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/1702.08734}, 
+}
+@misc{douze2025faisslibrary,
+      title={The Faiss library}, 
+      author={Matthijs Douze and Alexandr Guzhva and Chengqi Deng and Jeff Johnson and Gergely Szilvasy and Pierre-Emmanuel Mazaré and Maria Lomeli and Lucas Hosseini and Hervé Jégou},
+      year={2025},
+      eprint={2401.08281},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2401.08281}, 
+}
+
+# Once a tool is selected, the harness ensures the model generates syntactically valid arguments by enforcing a finite-state machine (FSM) constraint tied to the JSON schema of the retrieved tool via the Outlines library 
+@misc{willard2023efficientguidedgenerationlarge,
+      title={Efficient Guided Generation for Large Language Models}, 
+      author={Brandon T. Willard and Rémi Louf},
+      year={2023},
+      eprint={2307.09702},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2307.09702}, 
+}
+
+# ToolBench
+@misc{qin2023toolllmfacilitatinglargelanguage,
+      title={ToolLLM: Facilitating Large Language Models to Master 16000+ Real-world APIs}, 
+      author={Yujia Qin and Shihao Liang and Yining Ye and Kunlun Zhu and Lan Yan and Yaxi Lu and Yankai Lin and Xin Cong and Xiangru Tang and Bill Qian and Sihan Zhao and Lauren Hong and Runchu Tian and Ruobing Xie and Jie Zhou and Mark Gerstein and Dahai Li and Zhiyuan Liu and Maosong Sun},
+      year={2023},
+      eprint={2307.16789},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2307.16789}, 
+}
+
+#API-Bank
+@misc{li2023apibankcomprehensivebenchmarktoolaugmented,
+      title={API-Bank: A Comprehensive Benchmark for Tool-Augmented LLMs}, 
+      author={Minghao Li and Yingxiu Zhao and Bowen Yu and Feifan Song and Hangyu Li and Haiyang Yu and Zhoujun Li and Fei Huang and Yongbin Li},
+      year={2023},
+      eprint={2304.08244},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2304.08244}, 
+}
+
+# BFCL
+@inproceedings{patil2025the,
+title={The Berkeley Function Calling Leaderboard ({BFCL}): From Tool Use to Agentic Evaluation of Large Language Models},
+author={Shishir G Patil and Huanzhi Mao and Fanjia Yan and Charlie Cheng-Jie Ji and Vishnu Suresh and Ion Stoica and Joseph E. Gonzalez},
+booktitle={Forty-second International Conference on Machine Learning},
+year={2025},
+url={https://openreview.net/forum?id=2GmDdhBdDk}
+}
+
+#ToolEyes
+@misc{ye2024tooleyesfinegrainedevaluationtool,
+      title={ToolEyes: Fine-Grained Evaluation for Tool Learning Capabilities of Large Language Models in Real-world Scenarios}, 
+      author={Junjie Ye and Guanyu Li and Songyang Gao and Caishuang Huang and Yilong Wu and Sixian Li and Xiaoran Fan and Shihan Dou and Tao Ji and Qi Zhang and Tao Gui and Xuanjing Huang},
+      year={2024},
+      eprint={2401.00741},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2401.00741}, 
+}
+
+# MetaTool
+@misc{huang2024metatoolbenchmarklargelanguage,
+      title={MetaTool Benchmark for Large Language Models: Deciding Whether to Use Tools and Which to Use}, 
+      author={Yue Huang and Jiawen Shi and Yuan Li and Chenrui Fan and Siyuan Wu and Qihui Zhang and Yixin Liu and Pan Zhou and Yao Wan and Neil Zhenqiang Gong and Lichao Sun},
+      year={2024},
+      eprint={2310.03128},
+      archivePrefix={arXiv},
+      primaryClass={cs.SE},
+      url={https://arxiv.org/abs/2310.03128}, 
+}
+
+# Tool registries in production deployments commonly range from tens to tens of thousands of entries

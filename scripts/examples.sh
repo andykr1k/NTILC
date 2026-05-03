@@ -3,9 +3,11 @@
 set -euo pipefail
 
 # Input Directory
-DATASET="OSS"
+DATASET="ToolBench"
 SPLIT_EXAMPLES_PER_TOOL=20
 SPLIT_TEST_PER_TOOL=4
+TOOL_BATCH_SIZE=4
+MAX_NEW_TOKENS=2048
 TOOLS_CSV_PATH="/scratch4/home/akrik/NTILC/data/${DATASET}/tools.csv"
 TOOLS_JSON_PATH="/scratch4/home/akrik/NTILC/data/${DATASET}/tools.json"
 TOOL_EMBEDDING_DATASET_PATH="/scratch4/home/akrik/NTILC/data/${DATASET}/tool_embedding_dataset.jsonl"
@@ -17,22 +19,24 @@ HIERARCHY_PATH="/scratch4/home/akrik/NTILC/data/${DATASET}/tool_embedding_datase
 BENCHMARK_PATH="/scratch4/home/akrik/NTILC/data/${DATASET}/benchmark.json"
 OUTPUT_DIR="/scratch4/home/akrik/NTILC/data/${DATASET}/output"
 BENCHMARK_OUTPUT_ROOT="/scratch4/home/akrik/NTILC/benchmark/output"
+BENCHMARK_RUN_NAME="${DATASET,,}-full-benchmark"
 BASE_PYTHON="/scratch4/home/akrik/base/bin/python"
+export CUDA_VISIBLE_DEVICES=7
 # Create Tool Schema (If Needed)
-# python utils/create_tool_schema.py --tools-path=${TOOLS_CSV_PATH} --output-path=${TOOLS_JSON_PATH}
+# python utils/create_tool_schemas.py --tools-path=${TOOLS_CSV_PATH} --output-path=${TOOLS_JSON_PATH}
 
 # Create Tool Embedding Dataset (If Needed)
-# python utils/create_dataset.py --tools-path=${TOOLS_JSON_PATH} --output-path=${TOOL_EMBEDDING_DATASET_PATH} --summary-path=${TOOL_EMBEDDING_DATASET_SUMMARY_PATH} --examples-per-tool=${SPLIT_EXAMPLES_PER_TOOL}
+# python utils/create_dataset.py --tools-path=${TOOLS_JSON_PATH} --output-path=${TOOL_EMBEDDING_DATASET_PATH} --summary-path=${TOOL_EMBEDDING_DATASET_SUMMARY_PATH} --examples-per-tool=${SPLIT_EXAMPLES_PER_TOOL} --tool-batch-size=${TOOL_BATCH_SIZE} --max-new-tokens=${MAX_NEW_TOKENS}
 
 # Create Explicit Train/Test Split
 # Requires at least ${SPLIT_EXAMPLES_PER_TOOL} examples per tool in ${TOOL_EMBEDDING_DATASET_PATH}.
-# python scripts/split_tool_embedding_dataset.py \
-#   --dataset-path=${TOOL_EMBEDDING_DATASET_PATH} \
-#   --train-output-path=${TOOL_EMBEDDING_TRAIN_PATH} \
-#   --test-output-path=${TOOL_EMBEDDING_TEST_PATH} \
-#   --summary-path=${TOOL_EMBEDDING_SPLIT_SUMMARY_PATH} \
-#   --examples-per-tool=${SPLIT_EXAMPLES_PER_TOOL} \
-#   --test-per-tool=${SPLIT_TEST_PER_TOOL}
+python scripts/split_tool_embedding_dataset.py \
+  --dataset-path=${TOOL_EMBEDDING_DATASET_PATH} \
+  --train-output-path=${TOOL_EMBEDDING_TRAIN_PATH} \
+  --test-output-path=${TOOL_EMBEDDING_TEST_PATH} \
+  --summary-path=${TOOL_EMBEDDING_SPLIT_SUMMARY_PATH} \
+  --examples-per-tool=${SPLIT_EXAMPLES_PER_TOOL} \
+  --test-per-tool=${SPLIT_TEST_PER_TOOL}
 
 # Train One Normal Embedding Variant With Explicit Train/Test Split
 # python -m training.train_embedding_space \
@@ -69,7 +73,9 @@ BASE_PYTHON="/scratch4/home/akrik/base/bin/python"
 
 # Benchmark All Embedding Spaces On The Held-Out Test Split
 # Use ${BASE_PYTHON} so the benchmark runner has access to torch/transformers.
-# ${BASE_PYTHON} -m benchmark.run_all \
+# The benchmark runner auto-loads API keys from /scratch4/home/akrik/NTILC/.env by default.
+# Start from: cp /scratch4/home/akrik/NTILC/.env.example /scratch4/home/akrik/NTILC/.env
+# python -m benchmark.run_all \
 #   --dataset-path=${TOOL_EMBEDDING_TEST_PATH} \
 #   --tools-path=${TOOLS_JSON_PATH} \
 #   --embedding-root=${OUTPUT_DIR} \
@@ -78,25 +84,15 @@ BASE_PYTHON="/scratch4/home/akrik/base/bin/python"
 #   --no-hybrid
 
 # Benchmark Embeddings + Hybrid Qwen 3.5 27B Reranker + Frontier APIs
-# Current strong OSS picks for tool selection / reranking:
-#   Qwen/Qwen3.5-4B
-#   Qwen/Qwen3.5-9B
-#   Qwen/Qwen3.5-27B
-#   Qwen/Qwen3.5-35B-A3B
-#   moonshotai/Kimi-Linear-48B-A3B-Base
-${BASE_PYTHON} -m benchmark.run_all \
-  --dataset-path=${TOOL_EMBEDDING_TEST_PATH} \
-  --tools-path=${TOOLS_JSON_PATH} \
-  --embedding-root=${OUTPUT_DIR} \
-  --output-root=${BENCHMARK_OUTPUT_ROOT} \
-  --run-name="${BENCHMARK_RUN_NAME}" \
-  --hf-device=cuda:0 \
-  --hf-model="Qwen/Qwen3.5-4B" \
-  --hf-model="Qwen/Qwen3.5-9B" \
-  --hf-model="Qwen/Qwen3.5-27B" \
-  --hf-model="Qwen/Qwen3.5-35B-A3B" \
-  --hf-model="moonshotai/Kimi-Linear-48B-A3B-Base" \
-  --hybrid-reranker-model="Qwen/Qwen3.5-27B" \
-  --openai-model="gpt-5.2" \
-  --anthropic-model="claude-opus-4-1-20250805" \
-  --gemini-model="gemini-2.5-pro"
+# python -m benchmark.run_all \
+#   --dataset-path=${TOOL_EMBEDDING_TEST_PATH} \
+#   --tools-path=${TOOLS_JSON_PATH} \
+#   --embedding-root=${OUTPUT_DIR} \
+#   --output-root=${BENCHMARK_OUTPUT_ROOT} \
+#   --run-name="${BENCHMARK_RUN_NAME}" \
+#   --hf-device=auto \
+#   --hf-model="Qwen/Qwen3.5-27B" \
+#   --hybrid-reranker-model="Qwen/Qwen3.5-27B" \
+#   --openai-model="gpt-5.2" \
+#   --anthropic-model="claude-opus-4-1-20250805" \
+#   --gemini-model="gemini-2.5-pro"

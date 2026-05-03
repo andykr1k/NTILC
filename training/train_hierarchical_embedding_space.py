@@ -208,8 +208,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--device",
         type=str,
-        default="cuda:4",
-        help="Use auto, cuda, cuda:0, or cpu.",
+        default="auto",
+        help="Use auto, cuda, auto, or cpu.",
     )
     add_wandb_arguments(parser)
     add_diagnostic_arguments(parser)

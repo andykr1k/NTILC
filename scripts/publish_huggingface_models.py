@@ -7,6 +7,7 @@ import base64
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.request
@@ -18,6 +19,11 @@ import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from benchmark.env import get_env_file_value
+
 DEFAULT_PUBLISH_MANIFEST = REPO_ROOT / "registry" / "models" / "publish_manifest.json"
 DEFAULT_RELEASES_PATH = REPO_ROOT / "registry" / "models" / "releases.yaml"
 DEFAULT_DOTENV_PATH = REPO_ROOT / ".env"
@@ -62,20 +68,6 @@ def get_hf_api() -> Any:
     except ImportError as exc:
         raise RuntimeError("huggingface_hub is not installed") from exc
     return HfApi()
-
-
-def load_token_from_dotenv(path: Path, key: str) -> str:
-    if not path.exists():
-        return ""
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
-            continue
-        current_key, raw = stripped.split("=", 1)
-        if current_key.strip() != key:
-            continue
-        return raw.strip().strip('"').strip("'")
-    return ""
 
 
 def create_repo_via_http(repo_id: str, token: str, private: bool) -> None:
@@ -150,7 +142,7 @@ def main() -> None:
     ]
     require(publish_releases, "No releases selected for publication.")
 
-    token = os.environ.get(args.token_env, "").strip() or load_token_from_dotenv(DEFAULT_DOTENV_PATH, args.token_env)
+    token = os.environ.get(args.token_env, "").strip() or get_env_file_value(DEFAULT_DOTENV_PATH, args.token_env).strip()
     require(token or args.dry_run, f"Missing Hugging Face token in {args.token_env}")
 
     if args.dry_run:

@@ -3,6 +3,7 @@ import argparse
 import json
 import math
 import random
+import re
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -69,6 +70,12 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=str(DEFAULT_OUTPUT_DIR),
         help="Base directory where checkpoints and metrics are saved under architecture/loss subdirectories.",
+    )
+    parser.add_argument(
+        "--variant-name",
+        type=str,
+        default="",
+        help="Optional run variant subdirectory saved under architecture/loss. Default keeps the legacy output path.",
     )
     parser.add_argument(
         "--tools-path",
@@ -170,7 +177,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--compatibility-weight",
         type=float,
-        default=1.0,
+        default=5.0,
         help="Lambda applied to the functional compatibility regularizer.",
     )
     parser.add_argument(
@@ -193,7 +200,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--device",
         type=str,
-        default="cuda:4",
+        default="cuda:0",
         help="Use auto, cuda, cuda:0, or cpu.",
     )
     add_wandb_arguments(parser)
@@ -209,12 +216,27 @@ def normalize_loss_type(loss_type: str) -> str:
     return normalized
 
 
+def normalize_variant_name(variant_name: str) -> str:
+    stripped = str(variant_name).strip()
+    if not stripped:
+        return ""
+    normalized = re.sub(r"[^A-Za-z0-9_.=-]+", "_", stripped).strip("._-")
+    if not normalized:
+        raise ValueError(f"Invalid variant name: {variant_name!r}")
+    return normalized
+
+
 def resolve_output_dir(
     base_output_dir: str | Path,
     architecture: str,
     loss_type: str,
+    variant_name: str = "",
 ) -> Path:
-    return Path(base_output_dir) / architecture / normalize_loss_type(loss_type)
+    output_dir = Path(base_output_dir) / architecture / normalize_loss_type(loss_type)
+    normalized_variant_name = normalize_variant_name(variant_name)
+    if normalized_variant_name:
+        output_dir = output_dir / normalized_variant_name
+    return output_dir
 
 
 def load_jsonl(path: Path) -> List[Dict[str, Any]]:
@@ -426,12 +448,18 @@ def tool_compatibility_score(left: Dict[str, Any], right: Dict[str, Any]) -> flo
 
 def prepare_tool_compatibility_matrix(
     tool_names: Sequence[str],
-    rows: Sequence[Dict[str, Any]],
+    # FIX 4: Accept only training rows so test metadata cannot leak into the
+    # compatibility scores used during training.
+    train_rows: Sequence[Dict[str, Any]],
     dataset_path: Path,
     tools_path: str,
 ) -> tuple[torch.Tensor, Dict[str, Any]]:
     resolved_tools_path = resolve_tools_path(dataset_path, tools_path)
-    metadata = build_tool_metadata(tool_names=tool_names, rows=rows, tools_path=resolved_tools_path)
+    metadata = build_tool_metadata(
+        tool_names=tool_names,
+        rows=train_rows,
+        tools_path=resolved_tools_path,
+    )
     matrix = torch.zeros((len(tool_names), len(tool_names)), dtype=torch.float32)
 
     for row_index, left_tool in enumerate(tool_names):
@@ -574,6 +602,10 @@ class SimpleToolEmbeddingModel(nn.Module):
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor):
         embeddings = self.encode(input_ids=input_ids, attention_mask=attention_mask)
         prototypes = F.normalize(self.tool_prototypes, dim=-1)
+        # FIX 2: Document that logit_scale only applies to the CE term; the
+        # penalty branch uses raw cosine similarities intentionally. The scale
+        # mismatch is acceptable but compatibility_weight must be tuned on the
+        # cosine ([−1, 1]) range, not on the scaled logit range.
         scale = self.logit_scale.exp().clamp(max=100.0)
         logits = embeddings @ prototypes.T * scale
         return embeddings, logits
@@ -660,9 +692,17 @@ def functional_margin_penalty(
         if (negative_counts > 0).any()
         else zero
     )
+
+    # FIX 3: Track the fraction of samples that have at least one active
+    # violation. When this collapses to 0 the penalty term has vanished and
+    # only semantic_cross_entropy is driving training — useful early-stopping
+    # signal and sanity check.
+    active_sample_fraction = has_active_weight.float().mean()
+
     return penalty, {
         "mean_negative_incompatibility": mean_incompatibility,
         "active_functional_margin": active_margin,
+        "active_sample_fraction": active_sample_fraction,
     }
 
 
@@ -746,7 +786,16 @@ def compute_loss(
             raise ValueError("functional_margin loss requires a compatibility matrix.")
 
         semantic_cross_entropy = F.cross_entropy(logits, labels)
-        negative_weights = (1.0 - compatibility_matrix[labels]) * negative_mask.to(embeddings.dtype)
+
+        # FIX 1: Pass the full [B, num_tools] similarity matrix and the
+        # matching full negative_weights tensor (which already has the diagonal
+        # zeroed via negative_mask). Using the pruned `negative_similarities`
+        # view would mis-align column indices with the compatibility_matrix
+        # row/column indices, producing wrong per-pair weights.
+        negative_weights = (
+            (1.0 - compatibility_matrix[labels])
+            * negative_mask.to(embeddings.dtype)
+        )
         functional_penalty, functional_metrics = functional_margin_penalty(
             similarities=similarities,
             negative_weights=negative_weights,
@@ -761,6 +810,11 @@ def compute_loss(
             ),
             "active_functional_margin": float(
                 functional_metrics["active_functional_margin"].detach().cpu()
+            ),
+            # FIX 3: Surface active_sample_fraction so it appears in epoch
+            # metrics and WandB logs.
+            "active_sample_fraction": float(
+                functional_metrics["active_sample_fraction"].detach().cpu()
             ),
         }
 
@@ -1001,6 +1055,7 @@ def main() -> None:
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     args.loss_type = normalize_loss_type(args.loss_type)
+    args.variant_name = normalize_variant_name(args.variant_name)
 
     dataset_path = Path(args.dataset_path)
     train_dataset_path, test_dataset_path = resolve_split_dataset_paths(
@@ -1008,7 +1063,12 @@ def main() -> None:
         train_dataset_path=args.train_dataset_path,
         test_dataset_path=args.test_dataset_path,
     )
-    output_dir = resolve_output_dir(args.output_dir, architecture="normal", loss_type=args.loss_type)
+    output_dir = resolve_output_dir(
+        args.output_dir,
+        architecture="normal",
+        loss_type=args.loss_type,
+        variant_name=args.variant_name,
+    )
     args.output_dir = str(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1036,9 +1096,11 @@ def main() -> None:
         "basic_metadata_tool_count": 0,
     }
     if args.loss_type == "functional_margin":
+        # FIX 4: Pass only training rows so test-set metadata cannot influence
+        # the compatibility scores used during training.
         compatibility_matrix, compatibility_info = prepare_tool_compatibility_matrix(
             tool_names=tool_names,
-            rows=[*input_train_rows, *test_rows],
+            train_rows=input_train_rows,
             dataset_path=train_dataset_path,
             tools_path=args.tools_path,
         )
